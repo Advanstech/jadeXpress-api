@@ -1,0 +1,1 @@
+ALTER TABLE "staff_profile" ADD COLUMN "id_document_url" text;

@@ -1,0 +1,2 @@
+ALTER TABLE "staff_profile" ADD COLUMN "requires_pin_change" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "staff_profile" ADD COLUMN "requires_password_change" boolean DEFAULT false NOT NULL;
