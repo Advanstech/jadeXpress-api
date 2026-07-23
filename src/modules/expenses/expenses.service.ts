@@ -94,7 +94,11 @@ export class ExpensesService {
     return expense;
   }
 
-  async getSummaryByCategory(storeId: string, from: string, to: string) {
+  async getSummaryByCategory(storeId: string, from?: string, to?: string) {
+    const conditions: any[] = [eq(expenses.storeId, storeId)];
+    if (from) conditions.push(gte(expenses.expenseDate, new Date(from)));
+    if (to) conditions.push(lte(expenses.expenseDate, new Date(to)));
+
     return this.db
       .select({
         categoryId: expenses.categoryId,
@@ -102,13 +106,7 @@ export class ExpensesService {
         count: sql<number>`count(*)`,
       })
       .from(expenses)
-      .where(
-        and(
-          eq(expenses.storeId, storeId),
-          gte(expenses.expenseDate, new Date(from)),
-          lte(expenses.expenseDate, new Date(to)),
-        ),
-      )
+      .where(and(...conditions))
       .groupBy(expenses.categoryId);
   }
 }

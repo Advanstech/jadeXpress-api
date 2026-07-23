@@ -42,8 +42,8 @@ export class ExpensesController {
   @ApiOperation({ summary: 'Expense totals grouped by category' })
   getSummary(
     @CurrentUser() user: JwtPayload,
-    @Query('from') from: string,
-    @Query('to') to: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     return this.expensesService.getSummaryByCategory(user.storeId, from, to);
   }
