@@ -65,9 +65,11 @@ export class InventoryService {
     let query$ = this.db
       .select({
         product: products,
+        category: categories,
         stockItem: stockItems,
       })
       .from(products)
+      .leftJoin(categories, eq(products.categoryId, categories.id))
       .leftJoin(stockItems, and(
         eq(stockItems.productId, products.id),
         eq(stockItems.storeId, storeId),
@@ -91,6 +93,7 @@ export class InventoryService {
 
     const mappedData = data.map(row => ({
       ...row.product,
+      category: row.category?.name ?? null,
       quantity: row.stockItem?.quantityOnHand ?? 0,
       stockLevel: row.stockItem?.quantityOnHand ?? 0,
     }));
