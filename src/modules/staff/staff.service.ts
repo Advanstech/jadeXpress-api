@@ -137,6 +137,15 @@ export class StaffService {
     return staff;
   }
 
+  async delete(id: string) {
+    const [staff] = await this.db
+      .delete(staffProfile)
+      .where(eq(staffProfile.id, id))
+      .returning(safeSelect);
+    if (!staff) throw new NotFoundException('Staff member not found');
+    return { success: true, message: 'Staff member deleted' };
+  }
+
   async generateTemporaryPin(id: string) {
     const [staff] = await this.db.select().from(staffProfile).where(eq(staffProfile.id, id)).limit(1);
     if (!staff) throw new NotFoundException('Staff member not found');

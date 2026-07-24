@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Patch, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Body, Param, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { StaffService } from './staff.service';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -74,6 +74,13 @@ export class StaffController {
   @ApiOperation({ summary: 'Deactivate staff account' })
   deactivate(@Param('id') id: string) {
     return this.staffService.deactivate(id);
+  }
+
+  @Delete(':id')
+  @Roles('owner')
+  @ApiOperation({ summary: 'Delete staff account' })
+  delete(@Param('id') id: string) {
+    return this.staffService.delete(id);
   }
 
   @Put(':id/temporary-pin')
