@@ -56,7 +56,9 @@ async function bootstrap() {
     });
 
     // ── OpenAPI / Swagger ──────────────────────────────────────────────────
-    if (nodeEnv !== 'production') {
+    const enableSwagger =
+      nodeEnv !== 'production' || process.env.SWAGGER_ENABLED === 'true';
+    if (enableSwagger) {
       const swaggerConfig = new DocumentBuilder()
         .setTitle('JadeXpress POS API')
         .setDescription(
@@ -97,7 +99,7 @@ async function bootstrap() {
 
     await app.listen(port, '0.0.0.0');
     console.log(`🌿 JadeXpress API running on port ${port} [${nodeEnv}]`);
-    if (nodeEnv !== 'production') {
+    if (enableSwagger) {
       console.log(`📖 Swagger docs: http://localhost:${port}/docs`);
     }
   } catch (err) {
