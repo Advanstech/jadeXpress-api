@@ -33,7 +33,7 @@ async function bootstrap() {
 
     // ── Rate limiting ──────────────────────────────────────────────────────
     await app.register(fastifyRateLimit, {
-      max: 300,
+      max: (req) => (req.url?.startsWith(`/${apiPrefix}/auth/`) ? 20 : 300),
       timeWindow: '1 minute',
       allowList: ['127.0.0.1'],
     });

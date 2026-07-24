@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { eq, and, ilike, or, lte, gte, sql, desc, asc } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
   products,
   categories,
@@ -25,7 +26,10 @@ import type {
 
 @Injectable()
 export class InventoryService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   // ── Categories ────────────────────────────────────────────────────────────
   async getCategories() {
@@ -333,23 +337,43 @@ export class InventoryService {
 
     // Low / out-of-stock alert
     if (qty === 0) {
-      await this.db.insert(stockAlerts).values({
+      const [alert] = await this.db.insert(stockAlerts).values({
         productId,
         storeId,
         type: 'out_of_stock',
         severity: 'critical',
         message: `${product.name} is out of stock`,
         quantityOnHand: 0,
-      }).onConflictDoNothing();
+      }).onConflictDoNothing().returning();
+
+      if (alert) {
+        this.realtime.broadcastStockAlert(storeId, {
+          alertId: alert.id,
+          productId,
+          type: 'out_of_stock',
+          severity: 'critical',
+          message: `${product.name} is out of stock`,
+        });
+      }
     } else if (qty <= product.reorderPoint) {
-      await this.db.insert(stockAlerts).values({
+      const [alert] = await this.db.insert(stockAlerts).values({
         productId,
         storeId,
         type: 'low_stock',
         severity: 'warning',
         message: `${product.name} is below reorder point (${qty} remaining)`,
         quantityOnHand: qty,
-      }).onConflictDoNothing();
+      }).onConflictDoNothing().returning();
+
+      if (alert) {
+        this.realtime.broadcastStockAlert(storeId, {
+          alertId: alert.id,
+          productId,
+          type: 'low_stock',
+          severity: 'warning',
+          message: `${product.name} is below reorder point (${qty} remaining)`,
+        });
+      }
     }
 
     // Expiry alert for the batch
@@ -366,7 +390,7 @@ export class InventoryService {
         );
 
         if (daysToExpiry <= 90) {
-          await this.db.insert(stockAlerts).values({
+          const [alert] = await this.db.insert(stockAlerts).values({
             productId,
             storeId,
             batchId,
@@ -375,7 +399,17 @@ export class InventoryService {
             message: `Batch ${batch.batchNumber ?? batchId} of ${product.name} expires in ${daysToExpiry} days`,
             quantityOnHand: batch.quantityRemaining,
             expiryDate: batch.expiryDate,
-          }).onConflictDoNothing();
+          }).onConflictDoNothing().returning();
+
+          if (alert) {
+            this.realtime.broadcastStockAlert(storeId, {
+              alertId: alert.id,
+              productId,
+              type: alert.type,
+              severity: alert.severity,
+              message: `Batch ${batch.batchNumber ?? batchId} of ${product.name} expires in ${daysToExpiry} days`,
+            });
+          }
         }
       }
     }

@@ -5,7 +5,7 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
-import { eq, and, desc, sql, gte, lte, inArray } from 'drizzle-orm';
+import { eq, and, desc, sql, gte, lte, inArray, ne } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
   sales,
@@ -31,7 +31,7 @@ export class SalesService {
     private readonly realtime: RealtimeGateway,
   ) {}
 
-  // ── Create Sale (the hot path — must be fast) ─────────────────────────────
+  // ── Create Sale (the hot path — must be fast & atomic) ─────────────────────
   async createSale(dto: CreateSaleDto, cashierId: string) {
     // Idempotency: reject duplicate clientId
     const [existing] = await this.db
@@ -83,168 +83,178 @@ export class SalesService {
       ? Math.floor((finalTotal / 100) * loyaltyRate)
       : 0;
 
-    // Insert sale
-    const [sale] = await this.db.insert(sales).values({
-      clientId: dto.clientId,
-      receiptNumber,
-      storeId: dto.storeId,
-      cashierId,
-      customerId: dto.customerId,
-      shiftId: dto.shiftId,
-      status: 'completed',
-      paymentStatus: 'paid',
-      subtotalPesewas: subtotal,
-      discountAmountPesewas: dto.discountAmountPesewas,
-      vatAmountPesewas: vatAmount,
-      nhilAmountPesewas: nhilAmount,
-      getfundAmountPesewas: getfundAmount,
-      totalPesewas: finalTotal,
-      tenderedPesewas: dto.tenderedPesewas,
-      changePesewas: change,
-      tenderType: dto.tenderType,
-      tenderBreakdown: dto.tenderBreakdown,
-      momoReference: dto.momoReference,
-      cardReference: dto.cardReference,
-      loyaltyPointsEarned: pointsEarned,
-      loyaltyPointsRedeemed: dto.loyaltyPointsRedeemed,
-      loyaltyRedeemValuePesewas: loyaltyRedeemValue,
-      discountAuthorizedById: dto.discountAuthorizedById,
-      createdOffline: dto.createdOffline,
-      syncedAt: dto.createdOffline ? null : new Date(),
-      notes: dto.notes,
-      completedAt: new Date(),
-    }).returning();
+    const createdSale = await this.db.transaction(async (tx) => {
+      const [sale] = await tx.insert(sales).values({
+        clientId: dto.clientId,
+        receiptNumber,
+        storeId: dto.storeId,
+        cashierId,
+        customerId: dto.customerId,
+        shiftId: dto.shiftId,
+        status: 'completed',
+        paymentStatus: 'paid',
+        subtotalPesewas: subtotal,
+        discountAmountPesewas: dto.discountAmountPesewas,
+        vatAmountPesewas: vatAmount,
+        nhilAmountPesewas: nhilAmount,
+        getfundAmountPesewas: getfundAmount,
+        totalPesewas: finalTotal,
+        tenderedPesewas: dto.tenderedPesewas,
+        changePesewas: change,
+        tenderType: dto.tenderType,
+        tenderBreakdown: dto.tenderBreakdown,
+        momoReference: dto.momoReference,
+        cardReference: dto.cardReference,
+        loyaltyPointsEarned: pointsEarned,
+        loyaltyPointsRedeemed: dto.loyaltyPointsRedeemed,
+        loyaltyRedeemValuePesewas: loyaltyRedeemValue,
+        discountAuthorizedById: dto.discountAuthorizedById,
+        createdOffline: dto.createdOffline,
+        syncedAt: dto.createdOffline ? null : new Date(),
+        notes: dto.notes,
+        completedAt: new Date(),
+      }).returning();
 
-    // Insert sale items + deduct stock
-    const itemInserts = dto.items.map((item) => ({
-      saleId: sale.id,
-      productId: item.productId,
-      batchId: item.batchId,
-      quantity: item.quantity,
-      unitPricePesewas: item.unitPricePesewas,
-      discountAmountPesewas: item.discountAmountPesewas,
-      lineTotalPesewas: item.unitPricePesewas * item.quantity - item.discountAmountPesewas,
-      productNameSnapshot: item.productNameSnapshot,
-      productSkuSnapshot: item.productSkuSnapshot,
-    }));
+      const itemInserts = dto.items.map((item) => ({
+        saleId: sale.id,
+        productId: item.productId,
+        batchId: item.batchId,
+        quantity: item.quantity,
+        unitPricePesewas: item.unitPricePesewas,
+        discountAmountPesewas: item.discountAmountPesewas,
+        lineTotalPesewas: item.unitPricePesewas * item.quantity - item.discountAmountPesewas,
+        productNameSnapshot: item.productNameSnapshot,
+        productSkuSnapshot: item.productSkuSnapshot,
+      }));
 
-    await this.db.insert(saleItems).values(itemInserts);
+      await tx.insert(saleItems).values(itemInserts);
 
-    // Insert payment record(s)
-    if (dto.tenderType === 'split' && dto.tenderBreakdown.length > 0) {
-      await this.db.insert(payments).values(
-        dto.tenderBreakdown.map((t) => ({
+      if (dto.tenderType === 'split' && dto.tenderBreakdown.length > 0) {
+        await tx.insert(payments).values(
+          dto.tenderBreakdown.map((t) => ({
+            saleId: sale.id,
+            storeId: dto.storeId,
+            method: t.type as any,
+            amountPesewas: t.amountPesewas,
+            reference: t.reference,
+            status: 'paid' as const,
+          })),
+        );
+      } else {
+        await tx.insert(payments).values({
           saleId: sale.id,
           storeId: dto.storeId,
-          method: t.type as any,
-          amountPesewas: t.amountPesewas,
-          reference: t.reference,
-          status: 'paid' as const,
-        })),
-      );
-    } else {
-      await this.db.insert(payments).values({
-        saleId: sale.id,
+          method: dto.tenderType as any,
+          amountPesewas: finalTotal,
+          reference: dto.momoReference ?? dto.cardReference,
+          status: 'paid',
+        });
+      }
+
+      for (const item of dto.items) {
+        const [stockItem] = await tx
+          .select()
+          .from(stockItems)
+          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)))
+          .for('update')
+          .limit(1);
+
+        if (!stockItem) {
+          throw new NotFoundException(`Stock record not found for product ${item.productId}`);
+        }
+        if (stockItem.quantityOnHand < item.quantity) {
+          throw new ConflictException(`Insufficient stock for product ${item.productId}`);
+        }
+
+        const qtyBefore = stockItem.quantityOnHand;
+        const qtyAfter = qtyBefore - item.quantity;
+
+        await tx
+          .update(stockItems)
+          .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)));
+
+        await tx.insert(stockMovements).values({
+          productId: item.productId,
+          storeId: dto.storeId,
+          batchId: item.batchId,
+          type: 'sale_out',
+          quantityChange: -item.quantity,
+          quantityBefore: qtyBefore,
+          quantityAfter: qtyAfter,
+          referenceType: 'sale',
+          referenceId: sale.id,
+          performedById: cashierId,
+        });
+
+        if (item.batchId) {
+          const [updatedBatch] = await tx
+            .update(stockBatches)
+            .set({ quantityRemaining: sql`${stockBatches.quantityRemaining} - ${item.quantity}` })
+            .where(and(eq(stockBatches.id, item.batchId), gte(stockBatches.quantityRemaining, item.quantity)))
+            .returning();
+
+          if (!updatedBatch) {
+            throw new ConflictException(`Insufficient batch stock for ${item.batchId}`);
+          }
+        }
+      }
+
+      await tx.insert(ledgerEntries).values({
         storeId: dto.storeId,
-        method: dto.tenderType as any,
+        entryType: 'credit',
+        category: 'revenue',
         amountPesewas: finalTotal,
-        reference: dto.momoReference ?? dto.cardReference,
-        status: 'paid',
-      });
-    }
-
-    // Deduct stock for each item
-    for (const item of dto.items) {
-      const [stockItem] = await this.db
-        .select()
-        .from(stockItems)
-        .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)))
-        .limit(1);
-
-      const qtyBefore = stockItem?.quantityOnHand ?? 0;
-      const qtyAfter = Math.max(0, qtyBefore - item.quantity);
-
-      await this.db
-        .update(stockItems)
-        .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
-        .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)));
-
-      await this.db.insert(stockMovements).values({
-        productId: item.productId,
-        storeId: dto.storeId,
-        batchId: item.batchId,
-        type: 'sale_out',
-        quantityChange: -item.quantity,
-        quantityBefore: qtyBefore,
-        quantityAfter: qtyAfter,
+        vatAmountPesewas: vatAmount,
+        nhilAmountPesewas: nhilAmount,
+        getfundAmountPesewas: getfundAmount,
+        description: `Sale ${receiptNumber}`,
         referenceType: 'sale',
         referenceId: sale.id,
         performedById: cashierId,
       });
 
-      // Decrement batch quantity if batchId provided
-      if (item.batchId) {
-        await this.db
-          .update(stockBatches)
-          .set({ quantityRemaining: sql`${stockBatches.quantityRemaining} - ${item.quantity}` })
-          .where(eq(stockBatches.id, item.batchId));
-      }
-    }
+      if (dto.customerId && pointsEarned > 0) {
+        const [customer] = await tx
+          .select({ loyaltyPoints: customers.loyaltyPoints })
+          .from(customers)
+          .where(eq(customers.id, dto.customerId))
+          .for('update')
+          .limit(1);
 
-    // Ledger entry for revenue
-    await this.db.insert(ledgerEntries).values({
-      storeId: dto.storeId,
-      entryType: 'credit',
-      category: 'revenue',
-      amountPesewas: finalTotal,
-      vatAmountPesewas: vatAmount,
-      nhilAmountPesewas: nhilAmount,
-      getfundAmountPesewas: getfundAmount,
-      description: `Sale ${receiptNumber}`,
-      referenceType: 'sale',
-      referenceId: sale.id,
-      performedById: cashierId,
+        const newBalance = (customer?.loyaltyPoints ?? 0) + pointsEarned - dto.loyaltyPointsRedeemed;
+
+        await tx
+          .update(customers)
+          .set({
+            loyaltyPoints: newBalance,
+            totalSpendPesewas: sql`${customers.totalSpendPesewas} + ${finalTotal}`,
+            visitCount: sql`${customers.visitCount} + 1`,
+            lastVisitAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(customers.id, dto.customerId));
+
+        await tx.insert(loyaltyTransactions).values({
+          customerId: dto.customerId,
+          saleId: sale.id,
+          pointsDelta: pointsEarned,
+          balanceAfter: newBalance,
+          reason: `Sale ${receiptNumber}`,
+        });
+      }
+
+      return sale;
     });
 
-    // Loyalty points
-    if (dto.customerId && pointsEarned > 0) {
-      const [customer] = await this.db
-        .select({ loyaltyPoints: customers.loyaltyPoints })
-        .from(customers)
-        .where(eq(customers.id, dto.customerId))
-        .limit(1);
-
-      const newBalance = (customer?.loyaltyPoints ?? 0) + pointsEarned - dto.loyaltyPointsRedeemed;
-
-      await this.db
-        .update(customers)
-        .set({
-          loyaltyPoints: newBalance,
-          totalSpendPesewas: sql`${customers.totalSpendPesewas} + ${finalTotal}`,
-          visitCount: sql`${customers.visitCount} + 1`,
-          lastVisitAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(customers.id, dto.customerId));
-
-      await this.db.insert(loyaltyTransactions).values({
-        customerId: dto.customerId,
-        saleId: sale.id,
-        pointsDelta: pointsEarned,
-        balanceAfter: newBalance,
-        reason: `Sale ${receiptNumber}`,
-      });
-    }
-
-    // Broadcast realtime event
     this.realtime.broadcastToStore(dto.storeId, 'sale:completed', {
-      saleId: sale.id,
+      saleId: createdSale.id,
       receiptNumber,
       totalPesewas: finalTotal,
       cashierId,
     });
 
-    return { sale, alreadyExisted: false };
+    return { sale: createdSale, alreadyExisted: false };
   }
 
   // ── Get Sale ──────────────────────────────────────────────────────────────
@@ -307,42 +317,64 @@ export class SalesService {
       .limit(1);
 
     if (!sale) throw new NotFoundException('Sale not found');
-    if (sale.status === 'voided') throw new ConflictException('Sale already voided');
 
-    // Restore stock for each item
-    const items = await this.db
-      .select()
-      .from(saleItems)
-      .where(eq(saleItems.saleId, dto.saleId));
+    const updated = await this.db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(sales)
+        .where(and(eq(sales.id, dto.saleId), ne(sales.status, 'voided')))
+        .for('update')
+        .limit(1);
 
-    for (const item of items) {
-      await this.db
-        .update(stockItems)
-        .set({
-          quantityOnHand: sql`${stockItems.quantityOnHand} + ${item.quantity}`,
-          updatedAt: new Date(),
-        })
-        .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, sale.storeId)));
+      if (!locked) throw new ConflictException('Sale already voided');
 
-      await this.db.insert(stockMovements).values({
-        productId: item.productId,
-        storeId: sale.storeId,
-        type: 'return_in',
-        quantityChange: item.quantity,
-        quantityBefore: 0, // approximate
-        quantityAfter: item.quantity,
-        referenceType: 'void',
-        referenceId: sale.id,
-        performedById: staffId,
-        notes: `Void: ${dto.reason}`,
-      });
-    }
+      const items = await tx
+        .select()
+        .from(saleItems)
+        .where(eq(saleItems.saleId, dto.saleId));
 
-    const [updated] = await this.db
-      .update(sales)
-      .set({ status: 'voided', updatedAt: new Date(), notes: dto.reason })
-      .where(eq(sales.id, dto.saleId))
-      .returning();
+      for (const item of items) {
+        const [stockItem] = await tx
+          .select()
+          .from(stockItems)
+          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, sale.storeId)))
+          .for('update')
+          .limit(1);
+
+        if (!stockItem) {
+          throw new NotFoundException(`Stock record not found for product ${item.productId}`);
+        }
+
+        const qtyBefore = stockItem.quantityOnHand;
+        const qtyAfter = qtyBefore + item.quantity;
+
+        await tx
+          .update(stockItems)
+          .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, sale.storeId)));
+
+        await tx.insert(stockMovements).values({
+          productId: item.productId,
+          storeId: sale.storeId,
+          type: 'return_in',
+          quantityChange: item.quantity,
+          quantityBefore: qtyBefore,
+          quantityAfter: qtyAfter,
+          referenceType: 'void',
+          referenceId: sale.id,
+          performedById: staffId,
+          notes: `Void: ${dto.reason}`,
+        });
+      }
+
+      const [updated] = await tx
+        .update(sales)
+        .set({ status: 'voided', updatedAt: new Date(), notes: dto.reason })
+        .where(eq(sales.id, dto.saleId))
+        .returning();
+
+      return updated;
+    });
 
     return updated;
   }

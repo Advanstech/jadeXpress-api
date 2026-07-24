@@ -34,6 +34,8 @@ export const staffProfile = pgTable(
     requiresPinChange: boolean('requires_pin_change').notNull().default(false),
     requiresPasswordChange: boolean('requires_password_change').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
+    failedPinAttempts: integer('failed_pin_attempts').notNull().default(0),
+    pinLockedUntil: timestamp('pin_locked_until', { withTimezone: true }),
     biometricEnabled: boolean('biometric_enabled').notNull().default(false),
     avatarUrl: text('avatar_url'),
     idDocumentUrl: text('id_document_url'),

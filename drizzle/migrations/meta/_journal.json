@@ -29,6 +29,13 @@
       "when": 1784806594400,
       "tag": "0003_daffy_doctor_doom",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784850189386,
+      "tag": "0004_aberrant_lucky_pierre",
+      "breakpoints": true
     }
   ]
 }

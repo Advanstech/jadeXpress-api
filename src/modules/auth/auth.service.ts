@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { eq, and } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
+import { createHash, randomUUID } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { staffProfile, refreshTokens, otpTokens } from '../../database/schema';
@@ -60,9 +61,18 @@ export class AuthService {
     if (!staff) throw new NotFoundException('Staff not found');
     if (!staff.isActive) throw new UnauthorizedException('Account is deactivated');
 
-    const valid = await bcrypt.compare(dto.pin, staff.pinHash);
-    if (!valid) throw new UnauthorizedException('Invalid PIN');
+    const now = new Date();
+    if (staff.pinLockedUntil && new Date(staff.pinLockedUntil) > now) {
+      throw new UnauthorizedException('Account locked due to too many failed PIN attempts');
+    }
 
+    const valid = await bcrypt.compare(dto.pin, staff.pinHash);
+    if (!valid) {
+      await this.recordPinFailure(staff.id, staff.failedPinAttempts ?? 0);
+      throw new UnauthorizedException('Invalid PIN');
+    }
+
+    await this.resetPinLock(staff.id);
     return this.issueTokens(staff);
   }
 
@@ -76,16 +86,28 @@ export class AuthService {
 
     if (!staff || !staff.isActive) return { valid: false, role: '' };
 
+    const now = new Date();
+    if (staff.pinLockedUntil && new Date(staff.pinLockedUntil) > now) {
+      return { valid: false, role: '' };
+    }
+
     const valid = await bcrypt.compare(dto.pin, staff.pinHash);
+    if (!valid) {
+      await this.recordPinFailure(staff.id, staff.failedPinAttempts ?? 0);
+      return { valid: false, role: '' };
+    }
+
+    await this.resetPinLock(staff.id);
     return { valid, role: staff.role };
   }
 
   // ── Refresh token ─────────────────────────────────────────────────────────
   async refresh(token: string) {
+    const tokenHash = createHash('sha256').update(token).digest('hex');
     const [stored] = await this.db
       .select()
       .from(refreshTokens)
-      .where(eq(refreshTokens.tokenHash, token))
+      .where(eq(refreshTokens.tokenHash, tokenHash))
       .limit(1);
 
     if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
@@ -111,9 +133,10 @@ export class AuthService {
 
   // ── Revoke refresh token (logout) ─────────────────────────────────────────
   async logout(refreshTokenString: string) {
+    const tokenHash = createHash('sha256').update(refreshTokenString).digest('hex');
     await this.db
       .delete(refreshTokens)
-      .where(eq(refreshTokens.tokenHash, refreshTokenString));
+      .where(eq(refreshTokens.tokenHash, tokenHash));
     return { success: true };
   }
 
@@ -139,7 +162,12 @@ export class AuthService {
     
     await this.db
       .update(staffProfile)
-      .set({ pinHash: newPinHash, requiresPinChange: false })
+      .set({
+        pinHash: newPinHash,
+        requiresPinChange: false,
+        failedPinAttempts: 0,
+        pinLockedUntil: null,
+      })
       .where(eq(staffProfile.id, staffId));
 
     return { success: true };
@@ -264,6 +292,30 @@ export class AuthService {
     return { success: true };
   }
 
+  // ── Internal: PIN lockout helpers ─────────────────────────────────────────
+  private async recordPinFailure(staffId: string, currentAttempts: number) {
+    const maxAttempts = this.config.get<number>('security.pinMaxAttempts', 5);
+    const lockoutMinutes = this.config.get<number>('security.pinLockoutMinutes', 15);
+    const newAttempts = currentAttempts + 1;
+    const lockUntil = newAttempts >= maxAttempts ? new Date(Date.now() + lockoutMinutes * 60 * 1000) : undefined;
+
+    await this.db
+      .update(staffProfile)
+      .set({
+        failedPinAttempts: newAttempts,
+        pinLockedUntil: lockUntil,
+        updatedAt: new Date(),
+      })
+      .where(eq(staffProfile.id, staffId));
+  }
+
+  private async resetPinLock(staffId: string) {
+    await this.db
+      .update(staffProfile)
+      .set({ failedPinAttempts: 0, pinLockedUntil: null, updatedAt: new Date() })
+      .where(eq(staffProfile.id, staffId));
+  }
+
   // ── Internal: sign access + refresh tokens ────────────────────────────────
   private async issueTokens(staff: typeof staffProfile.$inferSelect) {
     const payload: JwtPayload = {
@@ -274,7 +326,8 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload);
 
-    const rawRefreshToken = uuidv4();
+    const rawRefreshToken = randomUUID();
+    const tokenHash = createHash('sha256').update(rawRefreshToken).digest('hex');
 
     // Parse refreshExpiresIn (e.g. "7d", "30d") into a Date
     const refreshExpiresIn = this.config.getOrThrow<string>('jwt.refreshExpiresIn');
@@ -284,7 +337,7 @@ export class AuthService {
 
     await this.db.insert(refreshTokens).values({
       staffId: staff.id,
-      tokenHash: rawRefreshToken, // raw UUID — rotated on every use
+      tokenHash,
       expiresAt,
     });
 

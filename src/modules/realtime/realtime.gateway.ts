@@ -12,6 +12,8 @@ import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 
+const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? 'http://localhost:3000').split(',');
+
 /**
  * Realtime WebSocket Gateway
  *
@@ -26,7 +28,7 @@ import { ConfigService } from '@nestjs/config';
  * Clients join a room per storeId on connection.
  */
 @WebSocketGateway({
-  cors: { origin: '*', credentials: true },
+  cors: { origin: CORS_ORIGINS, credentials: true },
   namespace: '/realtime',
 })
 export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect {

@@ -1,6 +1,7 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
   refundRequests,
   refundItems,
@@ -15,7 +16,10 @@ import type { CreateRefundDto } from './dto/refunds.dto';
 
 @Injectable()
 export class RefundsService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   async list(storeId: string, query: PaginationDto) {
     const { page, limit } = query;
@@ -52,107 +56,113 @@ export class RefundsService {
       0,
     );
 
-    // Insert refund request
-    const [refund] = await this.db.insert(refundRequests).values({
-      saleId: dto.saleId,
-      storeId: dto.storeId,
-      initiatedById,
-      authorizedById: dto.authorizedById,
-      reason: dto.reason,
-      method: dto.method,
-      status: 'approved',
-      totalAmountPesewas,
-      momoReference: dto.momoReference,
-      notes: dto.notes,
-      processedAt: new Date(),
-    }).returning();
+    const createdRefund = await this.db.transaction(async (tx) => {
+      const [refund] = await tx.insert(refundRequests).values({
+        saleId: dto.saleId,
+        storeId: dto.storeId,
+        initiatedById,
+        authorizedById: dto.authorizedById,
+        reason: dto.reason,
+        method: dto.method,
+        status: 'approved',
+        totalAmountPesewas,
+        momoReference: dto.momoReference,
+        notes: dto.notes,
+        processedAt: new Date(),
+      }).returning();
 
-    // Insert refund items
-    await this.db.insert(refundItems).values(
-      dto.items.map((i) => ({
-        refundRequestId: refund.id,
-        saleItemId: i.saleItemId,
-        productId: i.productId,
-        quantity: i.quantity,
-        unitPricePesewas: i.unitPricePesewas,
-        lineTotalPesewas: i.unitPricePesewas * i.quantity,
-        restockToInventory: i.restockToInventory,
-      })),
-    );
+      await tx.insert(refundItems).values(
+        dto.items.map((i) => ({
+          refundRequestId: refund.id,
+          saleItemId: i.saleItemId,
+          productId: i.productId,
+          quantity: i.quantity,
+          unitPricePesewas: i.unitPricePesewas,
+          lineTotalPesewas: i.unitPricePesewas * i.quantity,
+          restockToInventory: i.restockToInventory,
+        })),
+      );
 
-    // Restock inventory for items flagged for restocking
-    for (const item of dto.items.filter((i) => i.restockToInventory)) {
-      const [existing] = await this.db
-        .select()
-        .from(stockItems)
-        .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)))
-        .limit(1);
+      for (const item of dto.items.filter((i) => i.restockToInventory)) {
+        const [existing] = await tx
+          .select()
+          .from(stockItems)
+          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)))
+          .limit(1);
 
-      const qtyBefore = existing?.quantityOnHand ?? 0;
-      const qtyAfter = qtyBefore + item.quantity;
+        const qtyBefore = existing?.quantityOnHand ?? 0;
+        const qtyAfter = qtyBefore + item.quantity;
 
-      if (existing) {
-        await this.db
-          .update(stockItems)
-          .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
-          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)));
-      } else {
-        await this.db.insert(stockItems).values({
+        if (existing) {
+          await tx
+            .update(stockItems)
+            .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
+            .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)));
+        } else {
+          await tx.insert(stockItems).values({
+            productId: item.productId,
+            storeId: dto.storeId,
+            quantityOnHand: qtyAfter,
+            lastMovementAt: new Date(),
+          });
+        }
+
+        await tx.insert(stockMovements).values({
           productId: item.productId,
           storeId: dto.storeId,
-          quantityOnHand: qtyAfter,
-          lastMovementAt: new Date(),
+          type: 'return_in',
+          quantityChange: item.quantity,
+          quantityBefore: qtyBefore,
+          quantityAfter: qtyAfter,
+          referenceType: 'refund',
+          referenceId: refund.id,
+          performedById: initiatedById,
         });
       }
 
-      await this.db.insert(stockMovements).values({
-        productId: item.productId,
+      await tx.insert(ledgerEntries).values({
         storeId: dto.storeId,
-        type: 'return_in',
-        quantityChange: item.quantity,
-        quantityBefore: qtyBefore,
-        quantityAfter: qtyAfter,
+        entryType: 'debit',
+        category: 'refund',
+        amountPesewas: totalAmountPesewas,
+        description: `Refund for sale ${dto.saleId}`,
         referenceType: 'refund',
         referenceId: refund.id,
         performedById: initiatedById,
       });
-    }
 
-    // Ledger entry — debit (money out for refund)
-    await this.db.insert(ledgerEntries).values({
-      storeId: dto.storeId,
-      entryType: 'debit',
-      category: 'refund',
-      amountPesewas: totalAmountPesewas,
-      description: `Refund for sale ${dto.saleId}`,
-      referenceType: 'refund',
-      referenceId: refund.id,
-      performedById: initiatedById,
+      const allSaleItems = await tx
+        .select()
+        .from(saleItems)
+        .where(eq(saleItems.saleId, dto.saleId));
+
+      const refundedProductIds = new Set(dto.items.map((i) => i.saleItemId));
+      const fullyRefunded = allSaleItems.every((si) => refundedProductIds.has(si.id));
+
+      await tx
+        .update(sales)
+        .set({
+          status: fullyRefunded ? 'refunded' : 'partially_refunded',
+          updatedAt: new Date(),
+        })
+        .where(eq(sales.id, dto.saleId));
+
+      await tx
+        .update(refundRequests)
+        .set({ inventoryRestocked: true, accountingAdjusted: true })
+        .where(eq(refundRequests.id, refund.id));
+
+      return refund;
     });
 
-    // Check if all sale items were refunded → update sale status
-    const allSaleItems = await this.db
-      .select()
-      .from(saleItems)
-      .where(eq(saleItems.saleId, dto.saleId));
+    const result = await this.getById(createdRefund.id);
 
-    const refundedProductIds = new Set(dto.items.map((i) => i.saleItemId));
-    const fullyRefunded = allSaleItems.every((si) => refundedProductIds.has(si.id));
+    this.realtime.broadcastToStore(dto.storeId, 'refund:completed', {
+      refundId: createdRefund.id,
+      saleId: dto.saleId,
+      totalAmountPesewas: createdRefund.totalAmountPesewas,
+    });
 
-    await this.db
-      .update(sales)
-      .set({
-        status: fullyRefunded ? 'refunded' : 'partially_refunded',
-        updatedAt: new Date(),
-      })
-      .where(eq(sales.id, dto.saleId));
-
-    // Mark refund as inventoryRestocked + accountingAdjusted
-    await this.db
-      .update(refundRequests)
-      .set({ inventoryRestocked: true, accountingAdjusted: true })
-      .where(eq(refundRequests.id, refund.id));
-
-    return this.getById(refund.id);
+    return result;
   }
 }

@@ -2,12 +2,16 @@ import { Injectable, Inject, NotFoundException, ConflictException } from '@nestj
 import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { eodRecords, sales, refundRequests, expenses } from '../../database/schema';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type { InitEodDto, CloseEodDto } from './dto/eod.dto';
 
 @Injectable()
 export class EodService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   async initEod(dto: InitEodDto) {
     // Prevent duplicate init
@@ -106,6 +110,14 @@ export class EodService {
       })
       .where(eq(eodRecords.id, eod.id))
       .returning();
+
+    this.realtime.broadcastToStore(dto.storeId, 'eod:closed', {
+      eodId: updated.id,
+      businessDate: dto.businessDate,
+      status: updated.status,
+      cashVariance,
+      momoVariance,
+    });
 
     return updated;
   }

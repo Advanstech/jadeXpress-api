@@ -1,7 +1,7 @@
-import { Module, Global } from '@nestjs/common';
+import { Module, Global, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { drizzle } from 'drizzle-orm/neon-http';
-import { neon } from '@neondatabase/serverless';
+import { drizzle } from 'drizzle-orm/neon-serverless';
+import { Pool } from '@neondatabase/serverless';
 import * as schema from './schema';
 
 export const DRIZZLE = Symbol('DRIZZLE');
@@ -16,11 +16,17 @@ export type DrizzleDB = ReturnType<typeof drizzle<typeof schema>>;
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
         const url = config.getOrThrow<string>('database.url');
-        const sql = neon(url);
-        return drizzle(sql, { schema });
+        const pool = new Pool({ connectionString: url });
+        return drizzle(pool, { schema });
       },
     },
   ],
   exports: [DRIZZLE],
 })
-export class DatabaseModule {}
+export class DatabaseModule {
+  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+
+  async onModuleDestroy() {
+    await this.db.$client.end();
+  }
+}

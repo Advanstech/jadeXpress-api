@@ -101,31 +101,33 @@ export class SuppliersService {
       (sum, i) => sum + i.unitCostPesewas * i.quantityOrdered, 0,
     );
 
-    const [po] = await this.db.insert(purchaseOrders).values({
-      poNumber,
-      storeId: dto.storeId,
-      supplierId: dto.supplierId,
-      raisedById,
-      subtotalPesewas: subtotal,
-      totalPesewas: subtotal,
-      notes: dto.notes,
-      expectedDeliveryDate: dto.expectedDeliveryDate,
-    }).returning();
+    return this.db.transaction(async (tx) => {
+      const [po] = await tx.insert(purchaseOrders).values({
+        poNumber,
+        storeId: dto.storeId,
+        supplierId: dto.supplierId,
+        raisedById,
+        subtotalPesewas: subtotal,
+        totalPesewas: subtotal,
+        notes: dto.notes,
+        expectedDeliveryDate: dto.expectedDeliveryDate,
+      }).returning();
 
-    await this.db.insert(purchaseItems).values(
-      dto.items.map((item) => ({
-        purchaseOrderId: po.id,
-        productId: item.productId,
-        quantityOrdered: item.quantityOrdered,
-        quantityReceived: 0,
-        unitCostPesewas: item.unitCostPesewas,
-        totalCostPesewas: item.unitCostPesewas * item.quantityOrdered,
-        batchNumber: item.batchNumber,
-        expiryDate: item.expiryDate,
-      })),
-    );
+      await tx.insert(purchaseItems).values(
+        dto.items.map((item) => ({
+          purchaseOrderId: po.id,
+          productId: item.productId,
+          quantityOrdered: item.quantityOrdered,
+          quantityReceived: 0,
+          unitCostPesewas: item.unitCostPesewas,
+          totalCostPesewas: item.unitCostPesewas * item.quantityOrdered,
+          batchNumber: item.batchNumber,
+          expiryDate: item.expiryDate,
+        })),
+      );
 
-    return po;
+      return po;
+    });
   }
 
   async listPurchaseOrders(storeId: string, query: PaginationDto) {
@@ -166,91 +168,88 @@ export class SuppliersService {
       .limit(1);
     if (!po) throw new NotFoundException('Purchase order not found');
 
-    for (const received of dto.items) {
-      const [poItem] = await this.db
-        .select()
-        .from(purchaseItems)
-        .where(eq(purchaseItems.id, received.purchaseItemId))
-        .limit(1);
+    await this.db.transaction(async (tx) => {
+      for (const received of dto.items) {
+        const [poItem] = await tx
+          .select()
+          .from(purchaseItems)
+          .where(eq(purchaseItems.id, received.purchaseItemId))
+          .limit(1);
 
-      if (!poItem) continue;
+        if (!poItem) continue;
 
-      // Update qty received on PO item
-      await this.db
-        .update(purchaseItems)
-        .set({ quantityReceived: sql`${purchaseItems.quantityReceived} + ${received.quantityReceived}` })
-        .where(eq(purchaseItems.id, received.purchaseItemId));
+        await tx
+          .update(purchaseItems)
+          .set({ quantityReceived: sql`${purchaseItems.quantityReceived} + ${received.quantityReceived}` })
+          .where(eq(purchaseItems.id, received.purchaseItemId));
 
-      // Create stock batch
-      const [batch] = await this.db.insert(stockBatches).values({
-        productId: poItem.productId,
-        storeId: po.storeId,
-        supplierId: po.supplierId,
-        purchaseOrderId: po.id,
-        batchNumber: received.batchNumber ?? poItem.batchNumber,
-        quantityReceived: received.quantityReceived,
-        quantityRemaining: received.quantityReceived,
-        costPricePesewas: poItem.unitCostPesewas,
-        expiryDate: received.expiryDate ?? poItem.expiryDate,
-      }).returning();
-
-      // Update stock item
-      const [existing] = await this.db
-        .select()
-        .from(stockItems)
-        .where(and(eq(stockItems.productId, poItem.productId), eq(stockItems.storeId, po.storeId)))
-        .limit(1);
-
-      const qtyBefore = existing?.quantityOnHand ?? 0;
-      const qtyAfter = qtyBefore + received.quantityReceived;
-
-      if (existing) {
-        await this.db
-          .update(stockItems)
-          .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
-          .where(and(eq(stockItems.productId, poItem.productId), eq(stockItems.storeId, po.storeId)));
-      } else {
-        await this.db.insert(stockItems).values({
+        const [batch] = await tx.insert(stockBatches).values({
           productId: poItem.productId,
           storeId: po.storeId,
-          quantityOnHand: qtyAfter,
-          lastMovementAt: new Date(),
+          supplierId: po.supplierId,
+          purchaseOrderId: po.id,
+          batchNumber: received.batchNumber ?? poItem.batchNumber,
+          quantityReceived: received.quantityReceived,
+          quantityRemaining: received.quantityReceived,
+          costPricePesewas: poItem.unitCostPesewas,
+          expiryDate: received.expiryDate ?? poItem.expiryDate,
+        }).returning();
+
+        const [existing] = await tx
+          .select()
+          .from(stockItems)
+          .where(and(eq(stockItems.productId, poItem.productId), eq(stockItems.storeId, po.storeId)))
+          .limit(1);
+
+        const qtyBefore = existing?.quantityOnHand ?? 0;
+        const qtyAfter = qtyBefore + received.quantityReceived;
+
+        if (existing) {
+          await tx
+            .update(stockItems)
+            .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
+            .where(and(eq(stockItems.productId, poItem.productId), eq(stockItems.storeId, po.storeId)));
+        } else {
+          await tx.insert(stockItems).values({
+            productId: poItem.productId,
+            storeId: po.storeId,
+            quantityOnHand: qtyAfter,
+            lastMovementAt: new Date(),
+          });
+        }
+
+        await tx.insert(stockMovements).values({
+          productId: poItem.productId,
+          storeId: po.storeId,
+          batchId: batch.id,
+          type: 'purchase_in',
+          quantityChange: received.quantityReceived,
+          quantityBefore: qtyBefore,
+          quantityAfter: qtyAfter,
+          costPricePesewas: poItem.unitCostPesewas,
+          referenceType: 'purchase',
+          referenceId: po.id,
+          performedById: receivedById,
         });
       }
 
-      // Stock movement
-      await this.db.insert(stockMovements).values({
-        productId: poItem.productId,
-        storeId: po.storeId,
-        batchId: batch.id,
-        type: 'purchase_in',
-        quantityChange: received.quantityReceived,
-        quantityBefore: qtyBefore,
-        quantityAfter: qtyAfter,
-        costPricePesewas: poItem.unitCostPesewas,
-        referenceType: 'purchase',
-        referenceId: po.id,
-        performedById: receivedById,
-      });
-    }
+      const allItems = await tx
+        .select()
+        .from(purchaseItems)
+        .where(eq(purchaseItems.purchaseOrderId, po.id));
 
-    // Update PO status
-    const allItems = await this.db
-      .select()
-      .from(purchaseItems)
-      .where(eq(purchaseItems.purchaseOrderId, po.id));
+      const fullyReceived = allItems.every((i) => i.quantityReceived >= i.quantityOrdered);
+      const anyReceived = allItems.some((i) => i.quantityReceived > 0);
 
-    const fullyReceived = allItems.every((i) => i.quantityReceived >= i.quantityOrdered);
-    const anyReceived = allItems.some((i) => i.quantityReceived > 0);
-
-    await this.db
-      .update(purchaseOrders)
-      .set({
-        status: fullyReceived ? 'received' : anyReceived ? 'partial' : 'acknowledged',
-        deliveredAt: fullyReceived ? new Date() : undefined,
-        updatedAt: new Date(),
-      })
-      .where(eq(purchaseOrders.id, po.id));
+      await tx
+        .update(purchaseOrders)
+        .set({
+          status: fullyReceived ? 'received' : anyReceived ? 'partial' : 'acknowledged',
+          deliveredAt: fullyReceived ? new Date() : undefined,
+          updatedAt: new Date(),
+        })
+        .where(eq(purchaseOrders.id, po.id));
+    });
 
     return { success: true, purchaseOrderId: po.id };
   }
