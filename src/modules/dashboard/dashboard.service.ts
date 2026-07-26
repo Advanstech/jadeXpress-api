@@ -27,7 +27,7 @@ export class DashboardService {
     monthStart.setDate(1);
     monthStart.setHours(0, 0, 0, 0);
 
-    const [todayRevenue, monthRevenue, stockAlertCount, newCustomers, lowStockCount] =
+    const [todayRevenue, monthRevenue, stockAlertCount, newCustomers, lowStockCount, totalStockCount] =
       await Promise.all([
         // Today's revenue
         this.db
@@ -78,6 +78,13 @@ export class DashboardService {
             ),
           )
           .then((r) => Number(r[0].count)),
+
+        // Total tracked stock items for this store
+        this.db
+          .select({ count: sql<number>`count(*)` })
+          .from(stockItems)
+          .where(eq(stockItems.storeId, storeId))
+          .then((r) => Number(r[0].count)),
       ]);
 
     // Revenue trend: today vs same day last week
@@ -100,6 +107,10 @@ export class DashboardService {
       ? Math.round(((todayTotal - lastWeekTotal) / lastWeekTotal) * 100)
       : 0;
 
+    const stockHealthIndex = totalStockCount > 0
+      ? Math.round(((totalStockCount - lowStockCount) / totalStockCount) * 100)
+      : 100;
+
     return {
       today: {
         revenuePesewas: todayTotal,
@@ -113,6 +124,8 @@ export class DashboardService {
       inventory: {
         stockAlerts: stockAlertCount,
         lowStockProducts: lowStockCount,
+        totalProducts: totalStockCount,
+        stockHealthIndex,
       },
     };
   }

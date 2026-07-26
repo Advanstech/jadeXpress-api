@@ -75,21 +75,31 @@ export class InventoryService {
         eq(stockItems.storeId, storeId),
       ));
 
-    // Build complete where clause including lowStock filter
-    const finalConditions: any[] = conditions;
+    let countQuery$ = this.db
+      .select({ count: sql<number>`count(distinct ${products.id})` })
+      .from(products);
+
+    const finalConditions: any[] = [...conditions];
     if (lowStock) {
       finalConditions.push(lte(stockItems.quantityOnHand, products.reorderPoint));
+      countQuery$ = countQuery$.leftJoin(stockItems, and(
+        eq(stockItems.productId, products.id),
+        eq(stockItems.storeId, storeId),
+      )) as any;
     }
     const finalWhereClause = finalConditions.length > 0 ? and(...finalConditions) : undefined;
     
     if (finalWhereClause) {
       query$ = query$.where(finalWhereClause) as any;
+      countQuery$ = countQuery$.where(finalWhereClause) as any;
     }
 
-    const [data, [{ count }]] = await Promise.all([
+    const [data, countResult] = await Promise.all([
       query$.limit(limit).offset(offset),
-      this.db.select({ count: sql<number>`count(*)` }).from(products).where(whereClause),
+      countQuery$,
     ]);
+
+    const count = Number(countResult[0]?.count ?? 0);
 
     const mappedData = data.map(row => ({
       ...row.product,
@@ -100,7 +110,7 @@ export class InventoryService {
 
     const uniqueData = Array.from(new Map(mappedData.map(item => [item.id, item])).values());
 
-    return paginate(uniqueData, Number(count), page, limit);
+    return paginate(uniqueData, count, page, limit);
   }
 
   async getProductById(id: string) {

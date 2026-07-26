@@ -68,27 +68,41 @@ export class SuppliersService {
   }
 
   async getSupplierProducts(supplierId: string) {
-    // Get distinct product IDs from purchase items linked to this supplier's POs
+    // Collect product IDs both from POs and from products where this supplier is primary
     const supplierPOs = await this.db
       .select({ id: purchaseOrders.id })
       .from(purchaseOrders)
       .where(eq(purchaseOrders.supplierId, supplierId));
 
-    if (supplierPOs.length === 0) return { data: [], total: 0 };
-
     const poIds = supplierPOs.map((po) => po.id);
-    const itemRows = await this.db
-      .selectDistinct({ productId: purchaseItems.productId })
-      .from(purchaseItems)
-      .where(inArray(purchaseItems.purchaseOrderId, poIds));
 
-    if (itemRows.length === 0) return { data: [], total: 0 };
+    const [poProductRows, directProducts] = await Promise.all([
+      poIds.length > 0
+        ? this.db
+            .selectDistinct({ productId: purchaseItems.productId })
+            .from(purchaseItems)
+            .where(inArray(purchaseItems.purchaseOrderId, poIds))
+        : [],
+      this.db
+        .select({ id: products.id })
+        .from(products)
+        .where(eq(products.primarySupplierId, supplierId)),
+    ]);
 
-    const productIds = itemRows.map((r) => r.productId);
+    const ids = new Set<string>();
+    for (const row of poProductRows) {
+      ids.add(row.productId);
+    }
+    for (const row of directProducts) {
+      ids.add(row.id);
+    }
+
+    if (ids.size === 0) return { data: [], total: 0 };
+
     const data = await this.db
       .select()
       .from(products)
-      .where(inArray(products.id, productIds));
+      .where(inArray(products.id, Array.from(ids)));
 
     return { data, total: data.length };
   }

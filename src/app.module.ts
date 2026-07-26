@@ -24,6 +24,8 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { AiModule } from './modules/ai/ai.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { EmailModule } from './modules/email/email.module';
+import { PayrollModule } from './modules/payroll/payroll.module';
+import { InvoicingModule } from './modules/invoicing/invoicing.module';
 
 @Module({
   imports: [
@@ -49,6 +51,8 @@ import { EmailModule } from './modules/email/email.module';
     AiModule,
     RealtimeModule,
     EmailModule,
+    PayrollModule,
+    InvoicingModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

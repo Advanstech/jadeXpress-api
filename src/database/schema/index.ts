@@ -32,4 +32,6 @@ export * from './accounting';
 export * from './ai-insights';
 export * from './notifications';
 export * from './eod';
+export * from './payroll';
+export * from './invoicing';
 export * from './audit';

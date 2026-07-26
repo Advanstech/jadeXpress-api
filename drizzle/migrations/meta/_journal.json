@@ -36,6 +36,13 @@
       "when": 1784850189386,
       "tag": "0004_aberrant_lucky_pierre",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785022122565,
+      "tag": "0005_serious_jackpot",
+      "breakpoints": true
     }
   ]
 }

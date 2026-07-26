@@ -1,7 +1,7 @@
 import {
   Controller, Get, Post, Put, Patch, Body, Param, Query, HttpCode, HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { InventoryService } from './inventory.service';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
@@ -45,6 +45,12 @@ export class InventoryController {
   // ── Products ──────────────────────────────────────────────────────────────
   @Get('products')
   @ApiOperation({ summary: 'List products with optional search/filter' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiQuery({ name: 'categoryId', required: false, type: String })
+  @ApiQuery({ name: 'type', required: false, type: String })
+  @ApiQuery({ name: 'lowStock', required: false, type: Boolean })
   getProducts(
     @CurrentUser() user: JwtPayload,
     @Query(new ZodValidationPipe(ProductQuerySchema)) query: any,
