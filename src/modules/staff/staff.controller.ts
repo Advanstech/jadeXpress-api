@@ -79,8 +79,8 @@ export class StaffController {
   @Delete(':id')
   @Roles('owner')
   @ApiOperation({ summary: 'Delete staff account' })
-  delete(@Param('id') id: string) {
-    return this.staffService.delete(id);
+  delete(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.staffService.delete(id, user.sub);
   }
 
   @Put(':id/temporary-pin')

@@ -70,6 +70,9 @@ export class AccountingController {
       case 'week':
         startDate.setDate(now.getDate() - 7);
         break;
+      case 'quarter':
+        startDate.setMonth(now.getMonth() - 3);
+        break;
       case 'year':
         startDate.setFullYear(now.getFullYear() - 1);
         break;

@@ -24,17 +24,106 @@ export class AccountingService {
   }
 
   async getAggregatedPL(storeId: string, from: string, to: string) {
-    const snaps = await this.getPLSnapshots(storeId, 'daily', from, to);
-    
-    const revenuePesewas = snaps.reduce((acc, s) => acc + s.grossRevenuePesewas, 0);
-    const expensesPesewas = snaps.reduce((acc, s) => acc + s.totalExpensesPesewas, 0);
-    const netProfitPesewas = snaps.reduce((acc, s) => acc + s.netProfitPesewas, 0);
-    const refundsPesewas = snaps.reduce((acc, s) => acc + s.refundsTotalPesewas, 0);
+    const startDate = new Date(from);
+    const endDate = new Date(to);
 
-    const breakdown = snaps.reduce((acc, s) => {
-      acc[s.periodDate] = s.netProfitPesewas;
-      return acc;
-    }, {} as Record<string, number>);
+    // Live P&L aggregation from source tables so the page works even when no
+    // pre-computed snapshots have been generated yet.
+    const [rev] = await this.db
+      .select({
+        total: sql<number>`coalesce(sum(${sales.totalPesewas}), 0)`,
+      })
+      .from(sales)
+      .where(
+        and(
+          eq(sales.storeId, storeId),
+          eq(sales.status, 'completed'),
+          gte(sales.createdAt, startDate),
+          lte(sales.createdAt, endDate),
+        ),
+      );
+
+    const [ref] = await this.db
+      .select({
+        total: sql<number>`coalesce(sum(${refundRequests.totalAmountPesewas}), 0)`,
+      })
+      .from(refundRequests)
+      .where(
+        and(
+          eq(refundRequests.storeId, storeId),
+          gte(refundRequests.processedAt, startDate),
+          lte(refundRequests.processedAt, endDate),
+        ),
+      );
+
+    const [exp] = await this.db
+      .select({
+        total: sql<number>`coalesce(sum(${expenses.amountPesewas}), 0)`,
+      })
+      .from(expenses)
+      .where(
+        and(
+          eq(expenses.storeId, storeId),
+          gte(expenses.expenseDate, startDate),
+          lte(expenses.expenseDate, endDate),
+        ),
+      );
+
+    const revenuePesewas = Number(rev.total);
+    const refundsPesewas = Number(ref.total);
+    const expensesPesewas = Number(exp.total);
+    const netProfitPesewas = revenuePesewas - refundsPesewas - expensesPesewas;
+
+    const revenueByDay = await this.db
+      .select({
+        date: sql<string>`date(${sales.createdAt})`,
+        total: sql<number>`coalesce(sum(${sales.totalPesewas}), 0)`,
+      })
+      .from(sales)
+      .where(
+        and(
+          eq(sales.storeId, storeId),
+          eq(sales.status, 'completed'),
+          gte(sales.createdAt, startDate),
+          lte(sales.createdAt, endDate),
+        ),
+      )
+      .groupBy(sql`date(${sales.createdAt})`);
+
+    const refundsByDay = await this.db
+      .select({
+        date: sql<string>`date(${refundRequests.processedAt})`,
+        total: sql<number>`coalesce(sum(${refundRequests.totalAmountPesewas}), 0)`,
+      })
+      .from(refundRequests)
+      .where(
+        and(
+          eq(refundRequests.storeId, storeId),
+          gte(refundRequests.processedAt, startDate),
+          lte(refundRequests.processedAt, endDate),
+        ),
+      )
+      .groupBy(sql`date(${refundRequests.processedAt})`);
+
+    const expensesByDay = await this.db
+      .select({
+        date: sql<string>`date(${expenses.expenseDate})`,
+        total: sql<number>`coalesce(sum(${expenses.amountPesewas}), 0)`,
+      })
+      .from(expenses)
+      .where(
+        and(
+          eq(expenses.storeId, storeId),
+          gte(expenses.expenseDate, startDate),
+          lte(expenses.expenseDate, endDate),
+        ),
+      )
+      .groupBy(sql`date(${expenses.expenseDate})`);
+
+    const breakdown: Record<string, number> = {};
+    for (const r of revenueByDay) breakdown[r.date] = (breakdown[r.date] ?? 0) + Number(r.total);
+    for (const r of refundsByDay) breakdown[r.date] = (breakdown[r.date] ?? 0) - Number(r.total);
+    for (const r of expensesByDay) breakdown[r.date] = (breakdown[r.date] ?? 0) - Number(r.total);
 
     return {
       revenuePesewas,
@@ -42,7 +131,7 @@ export class AccountingService {
       netProfitPesewas,
       refundsPesewas,
       breakdown,
-      period: { from, to }
+      period: { from, to },
     };
   }
 
@@ -67,27 +156,34 @@ export class AccountingService {
   }
 
   async getTaxSummary(storeId: string, from: string, to: string) {
+    const startDate = new Date(from);
+    const endDate = new Date(to);
+
     const [totals] = await this.db
       .select({
-        vatTotal: sql<number>`coalesce(sum(${plSnapshots.vatCollectedPesewas}), 0)`,
-        nhilTotal: sql<number>`coalesce(sum(${plSnapshots.nhilCollectedPesewas}), 0)`,
-        getfundTotal: sql<number>`coalesce(sum(${plSnapshots.getfundCollectedPesewas}), 0)`,
+        vatTotal: sql<number>`coalesce(sum(${sales.vatAmountPesewas}), 0)`,
+        nhilTotal: sql<number>`coalesce(sum(${sales.nhilAmountPesewas}), 0)`,
+        getfundTotal: sql<number>`coalesce(sum(${sales.getfundAmountPesewas}), 0)`,
       })
-      .from(plSnapshots)
+      .from(sales)
       .where(
         and(
-          eq(plSnapshots.storeId, storeId),
-          gte(plSnapshots.periodDate, from),
-          lte(plSnapshots.periodDate, to),
+          eq(sales.storeId, storeId),
+          eq(sales.status, 'completed'),
+          gte(sales.createdAt, startDate),
+          lte(sales.createdAt, endDate),
         ),
       );
 
+    const vat = Number(totals.vatTotal);
+    const nhil = Number(totals.nhilTotal);
+    const getfund = Number(totals.getfundTotal);
+
     return {
-      vatTotalPesewas: Number(totals.vatTotal),
-      nhilTotalPesewas: Number(totals.nhilTotal),
-      getfundTotalPesewas: Number(totals.getfundTotal),
-      combinedTaxPesewas:
-        Number(totals.vatTotal) + Number(totals.nhilTotal) + Number(totals.getfundTotal),
+      vatTotalPesewas: vat,
+      nhilTotalPesewas: nhil,
+      getfundTotalPesewas: getfund,
+      combinedTaxPesewas: vat + nhil + getfund,
       period: { from, to },
       note: 'Ghana VAT 15% + NHIL 2.5% + GETFund 2.5%',
     };

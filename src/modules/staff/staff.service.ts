@@ -3,6 +3,7 @@ import {
   Inject,
   NotFoundException,
   UnauthorizedException,
+  ConflictException,
 } from '@nestjs/common';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
@@ -137,12 +138,73 @@ export class StaffService {
     return staff;
   }
 
-  async delete(id: string) {
+  async delete(id: string, reassignedToId?: string) {
     const [staff] = await this.db
-      .delete(staffProfile)
+      .select(safeSelect)
+      .from(staffProfile)
       .where(eq(staffProfile.id, id))
-      .returning(safeSelect);
+      .limit(1);
     if (!staff) throw new NotFoundException('Staff member not found');
+
+    // Resolve all foreign keys that reference staff_profile.id before deleting,
+    // so the database doesn't throw a 500 FK violation.
+    const fkResult = await this.db.execute(sql`
+      SELECT tc.table_name, kcu.column_name, c.is_nullable
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+        AND tc.table_schema = kcu.table_schema
+      JOIN information_schema.constraint_column_usage ccu
+        ON tc.constraint_name = ccu.constraint_name
+        AND tc.table_schema = ccu.table_schema
+      JOIN information_schema.columns c
+        ON c.table_schema = tc.table_schema
+        AND c.table_name = tc.table_name
+        AND c.column_name = kcu.column_name
+      WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND ccu.table_name = 'staff_profile'
+        AND ccu.column_name = 'id'
+        AND tc.table_schema = current_schema()
+    `);
+    const fkRows = ((fkResult as any).rows ?? []) as any[];
+
+    const ownedChildTables = new Set([
+      'refresh_token',
+      'otp_token',
+      'payslip',
+      'shift_reconciliation',
+    ]);
+    const blocked: string[] = [];
+
+    for (const row of fkRows) {
+      const table = String(row.table_name);
+      const column = String(row.column_name);
+      const isNullable = String(row.is_nullable).toUpperCase() === 'YES';
+      if (table === 'staff_profile') continue;
+
+      if (ownedChildTables.has(table)) {
+        await this.db.execute(sql`DELETE FROM ${sql.raw(`"${table}"`)} WHERE ${sql.raw(`"${column}"`)} = ${id}`);
+      } else if (table === 'sale' && column === 'cashier_id' && reassignedToId) {
+        await this.db.execute(sql`UPDATE "sale" SET "cashier_id" = ${reassignedToId} WHERE "cashier_id" = ${id}`);
+      } else if (isNullable) {
+        await this.db.execute(sql`UPDATE ${sql.raw(`"${table}"`)} SET ${sql.raw(`"${column}"`)} = NULL WHERE ${sql.raw(`"${column}"`)} = ${id}`);
+      } else {
+        const countResult = await this.db.execute(sql`SELECT count(*)::int as count FROM ${sql.raw(`"${table}"`)} WHERE ${sql.raw(`"${column}"`)} = ${id}`);
+        const countRes = (countResult as any).rows?.[0];
+        if (countRes && (countRes as any).count > 0) blocked.push(`${table}.${column}`);
+      }
+    }
+
+    if (blocked.length > 0) {
+      throw new ConflictException(
+        `Cannot delete staff member because they are referenced by: ${blocked.join(', ')}`,
+      );
+    }
+
+    await this.db
+      .delete(staffProfile)
+      .where(eq(staffProfile.id, id));
+
     return { success: true, message: 'Staff member deleted' };
   }
 
