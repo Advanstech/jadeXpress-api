@@ -21,34 +21,68 @@ export class AccountingController {
   constructor(private readonly accountingService: AccountingService) {}
 
   @Get('pl')
-  @ApiOperation({ summary: 'P&L snapshots (daily/weekly/monthly)' })
+  @ApiOperation({ summary: 'P&L aggregated (daily/weekly/monthly)' })
   getPL(
     @CurrentUser() user: JwtPayload,
-    @Query('periodType') periodType = 'monthly',
-    @Query('from') from: string,
-    @Query('to') to: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
-    return this.accountingService.getPLSnapshots(user.storeId, periodType, from, to);
+    const dates = this.calculateDates(period, from, to);
+    return this.accountingService.getAggregatedPL(user.storeId, dates.from, dates.to);
   }
 
   @Get('cash-flow')
   @ApiOperation({ summary: 'Daily cash flow (inflows vs outflows from ledger)' })
   getCashFlow(
     @CurrentUser() user: JwtPayload,
-    @Query('from') from: string,
-    @Query('to') to: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
-    return this.accountingService.getCashFlow(user.storeId, from, to);
+    const dates = this.calculateDates(period, from, to);
+    return this.accountingService.getCashFlow(user.storeId, dates.from, dates.to);
   }
 
   @Get('tax')
   @ApiOperation({ summary: 'Ghana VAT/NHIL/GETFund summary for a period' })
   getTaxSummary(
     @CurrentUser() user: JwtPayload,
-    @Query('from') from: string,
-    @Query('to') to: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
-    return this.accountingService.getTaxSummary(user.storeId, from, to);
+    const dates = this.calculateDates(period, from, to);
+    return this.accountingService.getTaxSummary(user.storeId, dates.from, dates.to);
+  }
+
+  private calculateDates(period?: string, from?: string, to?: string) {
+    if (from && to) return { from, to };
+    
+    const now = new Date();
+    let startDate = new Date();
+    
+    switch (period) {
+      case 'today':
+      case 'day':
+        startDate.setHours(0, 0, 0, 0);
+        break;
+      case 'week':
+        startDate.setDate(now.getDate() - 7);
+        break;
+      case 'year':
+        startDate.setFullYear(now.getFullYear() - 1);
+        break;
+      case 'month':
+      default:
+        startDate.setDate(now.getDate() - 30);
+        break;
+    }
+    
+    return { 
+      from: from || startDate.toISOString(), 
+      to: to || now.toISOString() 
+    };
   }
 
   @Get('ledger')

@@ -33,7 +33,7 @@ export class InventoryService {
 
   // ── Categories ────────────────────────────────────────────────────────────
   async getCategories() {
-    return this.db.select().from(categories).where(eq(categories.isActive, true));
+    return this.db.select().from(categories).where(eq(categories.isActive, true)).orderBy(asc(categories.name));
   }
 
   async createCategory(dto: CreateCategoryDto) {
@@ -104,6 +104,9 @@ export class InventoryService {
     const mappedData = data.map(row => ({
       ...row.product,
       category: row.category?.name ?? null,
+      categoryName: row.category?.name ?? null,
+      categoryId: row.product.categoryId,
+      categoryObj: row.category ?? null,
       quantity: row.stockItem?.quantityOnHand ?? 0,
       stockLevel: row.stockItem?.quantityOnHand ?? 0,
     }));

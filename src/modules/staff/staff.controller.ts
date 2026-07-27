@@ -90,9 +90,16 @@ export class StaffController {
     return this.staffService.generateTemporaryPin(id);
   }
 
+  @Post(':id/resend-credentials')
+  @Roles('manager', 'owner')
+  @ApiOperation({ summary: 'Resend login credentials (new temp PIN) to staff email' })
+  resendCredentials(@Param('id') id: string) {
+    return this.staffService.resendCredentials(id);
+  }
+
   @Get(':id/activities')
   @Roles('manager', 'owner')
-  @ApiOperation({ summary: 'Get staff activity history' })
+  @ApiOperation({ summary: 'Get staff activity history (audit logs + shift events)' })
   getActivities(@Param('id') id: string) {
     return this.staffService.getActivities(id);
   }

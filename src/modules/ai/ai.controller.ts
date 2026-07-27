@@ -4,6 +4,7 @@ import { AiService } from './ai.service';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { z } from 'zod';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
+import { ProductIntelligenceSchema, ProductIntelligenceDto } from './dto/ai.dto';
 
 const UpsellSchema = z.object({ cartProductIds: z.array(z.string().uuid()) });
 const NlSearchSchema = z.object({ query: z.string().min(1) });
@@ -114,6 +115,18 @@ export class AiController {
     } catch (err: any) {
       throw new BadRequestException(err?.message ?? 'Image generation failed');
     }
+  }
+
+  @Post('product-intelligence')
+  @ApiOperation({
+    summary:
+      'Counter guidance for a catalogue item — adapts to supplements, beauty, medicines, equipment',
+  })
+  async productIntelligence(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(ProductIntelligenceSchema)) body: ProductIntelligenceDto,
+  ) {
+    return this.aiService.getProductIntelligence(body.productId, user.storeId);
   }
 
   @Post('perfect-image')

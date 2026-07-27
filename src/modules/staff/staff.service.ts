@@ -162,18 +162,75 @@ export class StaffService {
   }
 
   async getActivities(id: string) {
-    // Return mock data for now or query audit_logs if fully populated.
-    // Assuming audit_logs exist:
     const { auditLogs } = await import('../../database/schema');
-    const { desc } = await import('drizzle-orm');
+
+    // Fetch audit logs for this staff member
     const logs = await this.db
       .select()
       .from(auditLogs)
       .where(eq(auditLogs.staffId, id))
       .orderBy(desc(auditLogs.createdAt))
       .limit(50);
-      
-    return logs;
+
+    // Also fetch shift events as activity items
+    const shifts = await this.db
+      .select()
+      .from(shiftReconciliation)
+      .where(eq(shiftReconciliation.staffId, id))
+      .orderBy(desc(shiftReconciliation.clockIn))
+      .limit(20);
+
+    const shiftEvents = shifts.flatMap((s) => {
+      const events: any[] = [{
+        id: `shift-in-${s.id}`,
+        action: 'clock_in',
+        entityType: 'shift',
+        entityId: s.id,
+        createdAt: s.clockIn,
+        newData: { openingFloat: s.openingFloat },
+      }];
+      if (s.clockOut) {
+        events.push({
+          id: `shift-out-${s.id}`,
+          action: 'clock_out',
+          entityType: 'shift',
+          entityId: s.id,
+          createdAt: s.clockOut,
+        });
+      }
+      return events;
+    });
+
+    // Merge and sort all activity events by date descending
+    const combined = [...logs, ...shiftEvents]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 60);
+
+    return combined;
+  }
+
+  async resendCredentials(id: string) {
+    const [staff] = await this.db.select().from(staffProfile).where(eq(staffProfile.id, id)).limit(1);
+    if (!staff) throw new NotFoundException('Staff member not found');
+    if (!staff.email) throw new NotFoundException('Staff member has no email address on record');
+
+    const rawPin = Math.floor(1000 + Math.random() * 9000).toString();
+    const pinHash = await bcrypt.hash(rawPin, 12);
+
+    await this.db
+      .update(staffProfile)
+      .set({ pinHash, requiresPinChange: true, updatedAt: new Date() })
+      .where(eq(staffProfile.id, id));
+
+    this.emailService.sendWelcomeEmail({
+      to: staff.email,
+      firstName: staff.firstName,
+      temporaryPin: rawPin,
+    }).catch((err) => {
+      console.error('Failed to resend welcome email', err);
+    });
+
+    return { success: true, message: `Welcome email with new temporary PIN sent to ${staff.email}` };
   }
 
   async clockIn(staffId: string, dto: ClockInDto) {

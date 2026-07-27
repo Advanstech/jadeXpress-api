@@ -8,12 +8,20 @@
  *  - The expected request/response contract (so frontend can build against it now)
  *  - Mock data that matches the contract
  */
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { eq, and, desc } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
-import { products, customers, aiInsights } from '../../database/schema';
+import {
+  products,
+  customers,
+  aiInsights,
+  categories,
+  suppliers,
+  stockItems,
+} from '../../database/schema';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { resolveProductProfile, ProductProfile } from './product-profiles';
 
 @Injectable()
 export class AiService {
@@ -298,6 +306,176 @@ Extract product details into a clean JSON object ONLY (no markdown formatting, n
       requiresConfirmation: true,
       isMocked: true,
       note: 'MOCKED_PENDING_MODEL_INTEGRATION — wire to vision-OCR model',
+    };
+  }
+
+  /**
+   * LIVE / FALLBACK — Product Intelligence for the POS counter.
+   *
+   * The catalogue spans vitamins & supplements, beauty/personal care, OTC and Rx
+   * medicines, equipment and consumables — so the guidance returned is shaped by
+   * the product's class rather than assuming everything is a drug.
+   */
+  async getProductIntelligence(productId: string, storeId: string) {
+    const [row] = await this.db
+      .select({
+        product: products,
+        category: categories,
+        supplier: suppliers,
+        stockItem: stockItems,
+      })
+      .from(products)
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .leftJoin(suppliers, eq(products.primarySupplierId, suppliers.id))
+      .leftJoin(
+        stockItems,
+        and(eq(stockItems.productId, products.id), eq(stockItems.storeId, storeId)),
+      )
+      .where(eq(products.id, productId))
+      .limit(1);
+
+    if (!row) throw new NotFoundException('Product not found');
+
+    const product = row.product;
+    const profile = resolveProductProfile(product.type, row.category?.name);
+
+    const commerce = {
+      unitPricePesewas: product.sellingPricePesewas ?? 0,
+      costPricePesewas: product.costPricePesewas ?? 0,
+      stockLevel: row.stockItem?.quantityOnHand ?? 0,
+      reorderPoint: product.reorderPoint ?? 0,
+      unit: product.unit,
+      packSize: product.packSize,
+      requiresPrescription: product.requiresPrescription,
+    };
+
+    const supplier = row.supplier
+      ? {
+          id: row.supplier.id,
+          name: row.supplier.name,
+          code: row.supplier.code,
+          paymentTermsDays: row.supplier.paymentTermsDays ?? null,
+          country: row.supplier.country ?? null,
+          isActive: row.supplier.isActive,
+        }
+      : null;
+
+    const base = {
+      productId: product.id,
+      productName: product.name,
+      sku: product.sku,
+      imageUrl: product.imageUrl,
+      productClass: profile.id,
+      classLabel: profile.label,
+      categoryName: row.category?.name ?? null,
+      categoryId: row.category?.id ?? null,
+      commerce,
+      supplier,
+    };
+
+    const generated = await this.generateProductGuidance(product, profile, row.category?.name);
+
+    return { ...base, ...generated };
+  }
+
+  /**
+   * Generates the class-aware guidance body. Uses Gemini when configured,
+   * otherwise falls back to deterministic, safe counter guidance.
+   */
+  private async generateProductGuidance(
+    product: typeof products.$inferSelect,
+    profile: ProductProfile,
+    categoryName?: string | null,
+  ) {
+    const geminiKey = this.config.get<string>('ai.geminiApiKey') || process.env.GEMINI_API_KEY;
+
+    if (geminiKey && geminiKey.length > 5) {
+      try {
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+        const prompt = `You are a retail counter assistant for a Ghanaian pharmacy & wellness shop.
+Give staff-facing guidance for this item so they can advise a walk-in customer.
+
+PRODUCT: ${product.name}
+CLASS: ${profile.label}
+CATEGORY: ${categoryName ?? 'Uncategorised'}
+FORM: ${product.dosageForm ?? 'unspecified'}
+STRENGTH: ${product.strength ?? 'unspecified'}
+MANUFACTURER: ${product.manufacturer ?? 'unspecified'}
+DESCRIPTION: ${product.description ?? 'none provided'}
+REQUIRES PRESCRIPTION: ${product.requiresPrescription ? 'yes' : 'no'}
+
+Respond with JSON ONLY (no markdown, no code fences) in exactly this shape:
+{
+  "headline": "2-4 sentences answering: ${profile.headlinePrompt}",
+  "sections": [
+    {
+      "id": "${profile.sections[0].id}",
+      "label": "${profile.sections[0].label}",
+      "blocks": [ { "heading": "SHORT UPPERCASE HEADING", "body": "1-4 sentences", "tone": "neutral" } ]
+    }
+  ]
+}
+
+Rules:
+- Produce exactly these sections, in this order, using these ids and labels:
+${profile.sections.map((s) => `  - id "${s.id}", label "${s.label}" — ${s.prompt}`).join('\n')}
+- Each section must have 2 to 3 blocks.
+- "tone" must be one of: "neutral", "caution", "warning", "positive".
+- Use "caution" or "warning" tone for anything a customer must be careful about.
+- Keep it practical for a shop counter. Never invent a licence or approval status.
+- Prices, stock and supplier details are handled elsewhere — do not mention them.`;
+
+        const result = await model.generateContent(prompt);
+        const responseText = result.response
+          .text()
+          .trim()
+          .replace(/^```json/i, '')
+          .replace(/^```/i, '')
+          .replace(/```$/i, '')
+          .trim();
+
+        const parsed = JSON.parse(responseText);
+
+        if (parsed?.headline && Array.isArray(parsed?.sections) && parsed.sections.length > 0) {
+          return {
+            headlineLabel: profile.headlineLabel,
+            headline: String(parsed.headline),
+            sections: parsed.sections.map((s: any, i: number) => ({
+              id: String(s.id ?? profile.sections[i]?.id ?? `section-${i}`),
+              label: String(s.label ?? profile.sections[i]?.label ?? 'Details'),
+              blocks: Array.isArray(s.blocks)
+                ? s.blocks.map((b: any) => ({
+                    heading: String(b.heading ?? '').toUpperCase(),
+                    body: String(b.body ?? ''),
+                    tone: ['neutral', 'caution', 'warning', 'positive'].includes(b.tone)
+                      ? b.tone
+                      : 'neutral',
+                  }))
+                : [],
+            })),
+            disclaimer: profile.disclaimer,
+            source: 'gemini-1.5-flash',
+            isMocked: false,
+          };
+        }
+      } catch (err: any) {
+        console.warn('[PRODUCT INTELLIGENCE WARN] Falling back to static guidance:', err?.message);
+      }
+    }
+
+    return {
+      headlineLabel: profile.headlineLabel,
+      headline: profile.fallbackHeadline(product),
+      sections: profile.sections.map((s) => ({
+        id: s.id,
+        label: s.label,
+        blocks: s.fallbackBlocks(product),
+      })),
+      disclaimer: profile.disclaimer,
+      source: 'counter-guidance-fallback',
+      isMocked: true,
     };
   }
 

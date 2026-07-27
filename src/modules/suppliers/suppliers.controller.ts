@@ -39,8 +39,11 @@ export class SuppliersController {
 
   @Get(':id/products')
   @ApiOperation({ summary: 'List all products ever sourced from a supplier' })
-  getSupplierProducts(@Param('id') id: string) {
-    return this.suppliersService.getSupplierProducts(id);
+  getSupplierProducts(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.suppliersService.getSupplierProducts(id, user.storeId);
   }
 
   @Post()

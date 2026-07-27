@@ -23,6 +23,29 @@ export class AccountingService {
       .orderBy(plSnapshots.periodDate);
   }
 
+  async getAggregatedPL(storeId: string, from: string, to: string) {
+    const snaps = await this.getPLSnapshots(storeId, 'daily', from, to);
+    
+    const revenuePesewas = snaps.reduce((acc, s) => acc + s.grossRevenuePesewas, 0);
+    const expensesPesewas = snaps.reduce((acc, s) => acc + s.totalExpensesPesewas, 0);
+    const netProfitPesewas = snaps.reduce((acc, s) => acc + s.netProfitPesewas, 0);
+    const refundsPesewas = snaps.reduce((acc, s) => acc + s.refundsTotalPesewas, 0);
+
+    const breakdown = snaps.reduce((acc, s) => {
+      acc[s.periodDate] = s.netProfitPesewas;
+      return acc;
+    }, {} as Record<string, number>);
+
+    return {
+      revenuePesewas,
+      expensesPesewas,
+      netProfitPesewas,
+      refundsPesewas,
+      breakdown,
+      period: { from, to }
+    };
+  }
+
   async getCashFlow(storeId: string, from: string, to: string) {
     return this.db
       .select({

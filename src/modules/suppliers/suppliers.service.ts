@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq, and, desc, sql, ilike, inArray } from 'drizzle-orm';
+import { eq, and, desc, sql, ilike, inArray, sum } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
   suppliers,
@@ -9,6 +9,7 @@ import {
   stockBatches,
   stockItems,
   stockMovements,
+  categories,
 } from '../../database/schema';
 import { products } from '../../database/schema/inventory';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
@@ -67,7 +68,7 @@ export class SuppliersService {
     return paginate(data, Number(count), page, limit);
   }
 
-  async getSupplierProducts(supplierId: string) {
+  async getSupplierProducts(supplierId: string, storeId?: string) {
     // Collect product IDs both from POs and from products where this supplier is primary
     const supplierPOs = await this.db
       .select({ id: purchaseOrders.id })
@@ -76,7 +77,7 @@ export class SuppliersService {
 
     const poIds = supplierPOs.map((po) => po.id);
 
-    const [poProductRows, directProducts] = await Promise.all([
+    const [poProductRows, directProducts, batchProductRows] = await Promise.all([
       poIds.length > 0
         ? this.db
             .selectDistinct({ productId: purchaseItems.productId })
@@ -87,6 +88,10 @@ export class SuppliersService {
         .select({ id: products.id })
         .from(products)
         .where(eq(products.primarySupplierId, supplierId)),
+      this.db
+        .selectDistinct({ productId: stockBatches.productId })
+        .from(stockBatches)
+        .where(eq(stockBatches.supplierId, supplierId)),
     ]);
 
     const ids = new Set<string>();
@@ -96,15 +101,40 @@ export class SuppliersService {
     for (const row of directProducts) {
       ids.add(row.id);
     }
+    for (const row of batchProductRows) {
+      ids.add(row.productId);
+    }
 
     if (ids.size === 0) return { data: [], total: 0 };
 
-    const data = await this.db
-      .select()
-      .from(products)
-      .where(inArray(products.id, Array.from(ids)));
+    const productIds = Array.from(ids);
 
-    return { data, total: data.length };
+    const rows = await this.db
+      .select({
+        product: products,
+        category: categories,
+        stockItem: stockItems,
+      })
+      .from(products)
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .leftJoin(
+        stockItems,
+        storeId
+          ? and(eq(stockItems.productId, products.id), eq(stockItems.storeId, storeId))
+          : eq(stockItems.productId, products.id),
+      )
+      .where(inArray(products.id, productIds));
+
+    const mappedData = rows.map((row) => ({
+      ...row.product,
+      category: row.category?.name ?? null,
+      quantity: row.stockItem?.quantityOnHand ?? 0,
+      stockLevel: row.stockItem?.quantityOnHand ?? 0,
+    }));
+
+    const uniqueData = Array.from(new Map(mappedData.map((item) => [item.id, item])).values());
+
+    return { data: uniqueData, total: uniqueData.length };
   }
 
   // ── Purchase Orders ────────────────────────────────────────────────────────
@@ -127,7 +157,7 @@ export class SuppliersService {
         expectedDeliveryDate: dto.expectedDeliveryDate,
       }).returning();
 
-      await tx.insert(purchaseItems).values(
+      const insertedItems = await tx.insert(purchaseItems).values(
         dto.items.map((item) => ({
           purchaseOrderId: po.id,
           productId: item.productId,
@@ -138,9 +168,9 @@ export class SuppliersService {
           batchNumber: item.batchNumber,
           expiryDate: item.expiryDate,
         })),
-      );
+      ).returning();
 
-      return po;
+      return { ...po, items: insertedItems };
     });
   }
 
