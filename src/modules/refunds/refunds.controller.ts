@@ -29,12 +29,26 @@ export class RefundsController {
   }
 
   @Post()
-  @Roles('manager', 'supervisor', 'owner')
-  @ApiOperation({ summary: 'Process a refund — requires manager PIN authorizedById' })
+  @Roles('manager', 'supervisor', 'owner', 'cashier', 'pharmacist')
+  @ApiOperation({ summary: 'Process a refund — requires manager PIN authorizedById for immediate processing' })
   create(
     @Body(new ZodValidationPipe(CreateRefundSchema)) dto: CreateRefundDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.refundsService.create(dto, user.sub);
+    return this.refundsService.create(dto, user);
+  }
+
+  @Post(':id/approve')
+  @Roles('manager', 'owner', 'supervisor')
+  @ApiOperation({ summary: 'Approve a pending refund request' })
+  approve(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.refundsService.approve(id, user.sub);
+  }
+
+  @Post(':id/reject')
+  @Roles('manager', 'owner', 'supervisor')
+  @ApiOperation({ summary: 'Reject a pending refund request' })
+  reject(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.refundsService.reject(id, user.sub);
   }
 }

@@ -99,6 +99,8 @@ export const products = pgTable(
     tags: jsonb('tags').$type<string[]>().default([]),
     searchVector: text('search_vector'), // pre-computed full-text search string
 
+    expiryDate: date('expiry_date'), // General tracked expiry date for the product
+
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },

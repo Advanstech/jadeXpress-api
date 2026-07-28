@@ -28,6 +28,7 @@ export const CreateProductSchema = z.object({
   minStockLevel: z.number().int().min(0).default(0),
   maxStockLevel: z.number().int().min(0).optional().nullable(),
   tags: z.array(z.string()).default([]),
+  expiryDate: z.string().optional().nullable(),
 });
 
 export const UpdateProductSchema = CreateProductSchema.partial();
