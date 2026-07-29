@@ -288,6 +288,66 @@ Extract product details into a clean JSON object ONLY (no markdown formatting, n
    * Human-in-the-loop confirmation before writing to DB.
    */
   async ocrExtract(imageUrl: string) {
+    const geminiKey = this.config.get<string>('ai.geminiApiKey') || process.env.GEMINI_API_KEY;
+    console.log('[AI OCR] Received input. Length:', imageUrl?.length ?? 0, 'Gemini key present:', !!geminiKey);
+
+    if (geminiKey && geminiKey.length > 5 && imageUrl?.length > 10) {
+      try {
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+        let rawBase64 = imageUrl;
+        let mimeType = 'image/jpeg';
+        if (imageUrl.startsWith('data:image')) {
+          const parts = imageUrl.split(';base64,');
+          mimeType = parts[0].replace('data:', '');
+          rawBase64 = parts[1];
+        }
+
+        const prompt = `Extract the supplier invoice from this image into a clean JSON object ONLY (no markdown, no code blocks, no explanation). Use this exact shape:
+{
+  "vendor": "supplier or company name",
+  "invoiceNumber": "invoice number",
+  "date": "YYYY-MM-DD",
+  "lineItems": [
+    { "description": "product name", "quantity": 0, "unitCost": 0, "total": 0 }
+  ],
+  "subtotal": 0,
+  "tax": 0,
+  "total": 0
+}
+Return monetary values as integer Ghanaian pesewas (1 GHS = 100 pesewas). For a price of GH₵10.40, return 1040. If a value is missing, use 0 or an empty string.`;
+
+        const result = await model.generateContent([
+          prompt,
+          { inlineData: { data: rawBase64, mimeType } },
+        ]);
+
+        const text = result.response
+          .text()
+          .trim()
+          .replace(/^```json/i, '')
+          .replace(/^```/i, '')
+          .replace(/```$/, '')
+          .trim();
+        const extractedData = JSON.parse(text);
+
+        console.log('[AI OCR] Gemini extraction succeeded');
+        return {
+          imageUrl,
+          extractedData,
+          confidence: 0.9,
+          source: 'gemini-vision-1.5-flash',
+          isMocked: false,
+          requiresConfirmation: true,
+        };
+      } catch (err: any) {
+        console.warn('[AI OCR] Gemini extraction failed:', err?.message);
+      }
+    } else {
+      console.warn('[AI OCR] No valid GEMINI_API_KEY or image payload — using fallback mock');
+    }
+
     return {
       imageUrl,
       extractedData: {
