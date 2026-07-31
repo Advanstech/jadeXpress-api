@@ -15,9 +15,9 @@ export default () => ({
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '7d',
   },
   tax: {
-    vatRateBps: parseInt(process.env.VAT_RATE_BPS ?? '1500', 10),
-    nhilRateBps: parseInt(process.env.NHIL_RATE_BPS ?? '250', 10),
-    getfundRateBps: parseInt(process.env.GETFUND_RATE_BPS ?? '250', 10),
+    vatRateBps: parseInt(process.env.VAT_RATE_BPS ?? process.env.VAT_RATE ?? '1500', 10),
+    nhilRateBps: parseInt(process.env.NHIL_RATE_BPS ?? process.env.NHIL_RATE ?? '250', 10),
+    getfundRateBps: parseInt(process.env.GETFUND_RATE_BPS ?? process.env.GETFUND_RATE ?? '250', 10),
   },
   ai: {
     openaiApiKey: process.env.OPENAI_API_KEY,

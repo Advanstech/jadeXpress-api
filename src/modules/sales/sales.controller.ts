@@ -19,6 +19,7 @@ const SaleQuerySchema = PaginationSchema.extend({
   to: z.string().optional(),
   cashierId: z.string().uuid().optional(),
   status: z.string().optional(),
+  search: z.string().optional(),
 });
 
 @ApiTags('sales')

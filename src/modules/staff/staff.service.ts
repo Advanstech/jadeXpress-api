@@ -271,6 +271,35 @@ export class StaffService {
     return combined;
   }
 
+  async getAllAuditLogs(storeId: string, query: PaginationDto) {
+    const { auditLogs } = await import('../../database/schema');
+    const { page, limit } = query;
+    const offset = (page - 1) * limit;
+    const where = eq(auditLogs.storeId, storeId);
+
+    const [data, [{ count }]] = await Promise.all([
+      this.db.query.auditLogs.findMany({
+        where,
+        with: { staff: true },
+        orderBy: [desc(auditLogs.createdAt)],
+        limit,
+        offset,
+      }),
+      this.db.select({ count: sql<number>`count(*)` }).from(auditLogs).where(where),
+    ]);
+
+    // sanitize staff inside logs to not leak passwordHash
+    const sanitizedData = data.map((log: any) => {
+      if (log.staff) {
+        delete log.staff.pinHash;
+        delete log.staff.passwordHash;
+      }
+      return log;
+    });
+
+    return paginate(sanitizedData, Number(count), page, limit);
+  }
+
   async resendCredentials(id: string) {
     const [staff] = await this.db.select().from(staffProfile).where(eq(staffProfile.id, id)).limit(1);
     if (!staff) throw new NotFoundException('Staff member not found');
@@ -306,6 +335,17 @@ export class StaffService {
         openingFloat: dto.openingFloat,
       })
       .returning();
+
+    const { auditLogs } = await import('../../database/schema');
+    await this.db.insert(auditLogs).values({
+      staffId,
+      storeId: dto.storeId,
+      action: 'CLOCK_IN',
+      entityType: 'shift',
+      entityId: shift.id,
+      newData: { openingFloat: dto.openingFloat },
+    });
+
     return shift;
   }
 
@@ -316,6 +356,17 @@ export class StaffService {
       .where(and(eq(shiftReconciliation.id, dto.shiftId), eq(shiftReconciliation.staffId, staffId)))
       .returning();
     if (!shift) throw new NotFoundException('Active shift not found');
+
+    const { auditLogs } = await import('../../database/schema');
+    await this.db.insert(auditLogs).values({
+      staffId,
+      storeId: shift.storeId,
+      action: 'CLOCK_OUT',
+      entityType: 'shift',
+      entityId: shift.id,
+      newData: { shiftId: shift.id },
+    });
+
     return shift;
   }
 

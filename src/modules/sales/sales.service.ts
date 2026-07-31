@@ -5,7 +5,7 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
-import { eq, and, desc, sql, gte, lte, inArray, ne } from 'drizzle-orm';
+import { eq, and, desc, sql, gte, lte, inArray, ne, ilike } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
   sales,
@@ -19,6 +19,7 @@ import {
   loyaltyTransactions,
   ledgerEntries,
   organisation,
+  auditLogs,
 } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -114,6 +115,15 @@ export class SalesService {
         notes: dto.notes,
         completedAt: new Date(),
       }).returning();
+
+      await tx.insert(auditLogs).values({
+        staffId: cashierId,
+        storeId: dto.storeId,
+        action: 'SALE_COMPLETED',
+        entityType: 'sale',
+        entityId: sale.id,
+        newData: { totalPesewas: finalTotal, receiptNumber },
+      });
 
       const itemInserts = dto.items.map((item) => ({
         saleId: sale.id,
@@ -259,11 +269,10 @@ export class SalesService {
 
   // ── Get Sale ──────────────────────────────────────────────────────────────
   async getSaleById(id: string) {
-    const [sale] = await this.db
-      .select()
-      .from(sales)
-      .where(eq(sales.id, id))
-      .limit(1);
+    const sale = await this.db.query.sales.findFirst({
+      where: eq(sales.id, id),
+      with: { cashier: true },
+    });
     if (!sale) throw new NotFoundException('Sale not found');
 
     const items = await this.db
@@ -277,9 +286,9 @@ export class SalesService {
   // ── List Sales ────────────────────────────────────────────────────────────
   async listSales(
     storeId: string,
-    query: PaginationDto & { from?: string; to?: string; cashierId?: string; status?: string },
+    query: PaginationDto & { from?: string; to?: string; cashierId?: string; status?: string; search?: string },
   ) {
-    const { page, limit, from, to, cashierId: cId, status } = query;
+    const { page, limit, from, to, cashierId: cId, status, search } = query;
     const offset = (page - 1) * limit;
 
     const conditions = [eq(sales.storeId, storeId)];
@@ -287,11 +296,18 @@ export class SalesService {
     if (to) conditions.push(lte(sales.createdAt, new Date(to)));
     if (cId) conditions.push(eq(sales.cashierId, cId));
     if (status) conditions.push(eq(sales.status, status as any));
+    if (search) conditions.push(ilike(sales.receiptNumber, `%${search}%`));
 
     const where = and(...conditions);
 
     const [data, [{ count }]] = await Promise.all([
-      this.db.select().from(sales).where(where).orderBy(desc(sales.createdAt)).limit(limit).offset(offset),
+      this.db.query.sales.findMany({
+        where,
+        with: { cashier: true },
+        orderBy: [desc(sales.createdAt)],
+        limit,
+        offset,
+      }),
       this.db.select({ count: sql<number>`count(*)` }).from(sales).where(where),
     ]);
 
@@ -305,6 +321,18 @@ export class SalesService {
       .set({ status: 'held', heldAt: new Date(), heldNote: dto.heldNote, updatedAt: new Date() })
       .where(eq(sales.id, dto.saleId))
       .returning();
+
+    if (sale) {
+      await this.db.insert(auditLogs).values({
+        staffId: sale.cashierId,
+        storeId: sale.storeId,
+        action: 'SALE_HELD',
+        entityType: 'sale',
+        entityId: sale.id,
+        newData: { heldNote: dto.heldNote },
+      });
+    }
+
     return sale;
   }
 
@@ -367,13 +395,22 @@ export class SalesService {
         });
       }
 
-      const [updated] = await tx
+      const [updatedSale] = await tx
         .update(sales)
         .set({ status: 'voided', updatedAt: new Date(), notes: dto.reason })
         .where(eq(sales.id, dto.saleId))
         .returning();
 
-      return updated;
+      await tx.insert(auditLogs).values({
+        staffId,
+        storeId: sale.storeId,
+        action: 'SALE_VOIDED',
+        entityType: 'sale',
+        entityId: sale.id,
+        newData: { reason: dto.reason },
+      });
+
+      return updatedSale;
     });
 
     return updated;

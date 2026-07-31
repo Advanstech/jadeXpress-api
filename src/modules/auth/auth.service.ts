@@ -11,7 +11,7 @@ import * as bcrypt from 'bcrypt';
 import { createHash, randomUUID } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
-import { staffProfile, refreshTokens, otpTokens } from '../../database/schema';
+import { staffProfile, refreshTokens, otpTokens, auditLogs } from '../../database/schema';
 import { JwtPayload } from '../../common/decorators/current-user.decorator';
 import type { LoginDto, PinLoginDto, PinVerifyDto, ChangePinDto } from './dto/auth.dto';
 
@@ -170,6 +170,15 @@ export class AuthService {
       })
       .where(eq(staffProfile.id, staffId));
 
+    await this.db.insert(auditLogs).values({
+      staffId,
+      storeId,
+      action: 'CHANGE_PIN',
+      entityType: 'staff',
+      entityId: staffId,
+      newData: {},
+    });
+
     return { success: true };
   }
 
@@ -197,6 +206,15 @@ export class AuthService {
       .update(staffProfile)
       .set({ passwordHash: newPasswordHash, requiresPasswordChange: false })
       .where(eq(staffProfile.id, staffId));
+
+    await this.db.insert(auditLogs).values({
+      staffId,
+      storeId,
+      action: 'CHANGE_PASSWORD',
+      entityType: 'staff',
+      entityId: staffId,
+      newData: {},
+    });
 
     return { success: true };
   }

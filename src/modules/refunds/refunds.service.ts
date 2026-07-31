@@ -10,6 +10,7 @@ import {
   stockItems,
   stockMovements,
   ledgerEntries,
+  auditLogs,
 } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type { CreateRefundDto } from './dto/refunds.dto';
@@ -91,6 +92,15 @@ export class RefundsService {
       if (status === 'approved') {
         await this.executeRefundEffects(tx, refund, dto.items, dto.storeId, initiatedById);
       }
+
+      await tx.insert(auditLogs).values({
+        staffId: initiatedById,
+        storeId: dto.storeId,
+        action: 'REFUND_PROCESSED',
+        entityType: 'refund',
+        entityId: refund.id,
+        newData: { totalAmountPesewas, status },
+      });
 
       return refund;
     });

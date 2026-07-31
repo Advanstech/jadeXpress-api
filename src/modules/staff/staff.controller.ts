@@ -97,6 +97,13 @@ export class StaffController {
     return this.staffService.resendCredentials(id);
   }
 
+  @Get('audit/all')
+  @Roles('manager', 'owner')
+  @ApiOperation({ summary: 'Get all staff audit logs for the store' })
+  getAllAuditLogs(@CurrentUser() user: JwtPayload, @Query(new ZodValidationPipe(PaginationSchema)) query: any) {
+    return this.staffService.getAllAuditLogs(user.storeId, query);
+  }
+
   @Get(':id/activities')
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Get staff activity history (audit logs + shift events)' })
