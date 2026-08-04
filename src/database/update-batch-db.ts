@@ -2,8 +2,6 @@ import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import { products } from './schema';
 import { ilike, eq } from 'drizzle-orm';
-import * as dotenv from 'dotenv';
-dotenv.config({ path: '.env' });
 
 async function updateBatchProducts() {
   const sql = neon(process.env.DATABASE_URL!);

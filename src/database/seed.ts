@@ -3,8 +3,6 @@ import { drizzle } from 'drizzle-orm/neon-http';
 import * as bcrypt from 'bcrypt';
 import { organisation, stores, staffProfile, categories, suppliers, products, stockItems, stockBatches } from './schema';
 import { eq } from 'drizzle-orm';
-import * as dotenv from 'dotenv';
-dotenv.config({ path: '.env' });
 
 async function seed() {
   const sql = neon(process.env.DATABASE_URL!);

@@ -2,8 +2,6 @@ import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import * as bcrypt from 'bcrypt';
 import { staffProfile } from './database/schema';
-import * as dotenv from 'dotenv';
-dotenv.config({ path: '.env' });
 
 async function testPin() {
   const sql = neon(process.env.DATABASE_URL!);
