@@ -30,7 +30,7 @@ async function runQuery(fn, retries = 3) {
   }
 }
 
-console.log('🌱 Seeding Extracted Products Set 18 (5 Items)...');
+console.log('🌱 Seeding Extracted Products Set 23 (2 New Items)...');
 
 const stores = await runQuery(() => sql`SELECT id FROM store WHERE code = 'ISR' LIMIT 1`);
 if (!stores.length) {
@@ -336,6 +336,94 @@ const [supPNX] = await runQuery(() => sql`
 `);
 const supplierPNXId = supPNX.id;
 
+const [supPRT] = await runQuery(() => sql`
+  INSERT INTO supplier (code, name, contact_person, email, phone, address, city, country)
+  VALUES ('SUP-PRT', 'Quest Personal Care (Pretty UK)', 'Export Desk', 'sales@questpersonalcare.co.uk', '+44 161 789 2200', '100 Regent Rd', 'Manchester', 'UK')
+  ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+  RETURNING id
+`);
+const supplierPRTId = supPRT.id;
+
+const [supIMF] = await runQuery(() => sql`
+  INSERT INTO supplier (code, name, contact_person, email, phone, address, city, country)
+  VALUES ('SUP-IMF', 'Wishcompany Inc (I''m from Korea)', 'Global Desk', 'contact@wishcompany.net', '+82 2 3446 8040', 'Gangnam-gu', 'Seoul', 'South Korea')
+  ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+  RETURNING id
+`);
+const supplierIMFId = supIMF.id;
+
+const [supCRT] = await runQuery(() => sql`
+  INSERT INTO supplier (code, name, contact_person, email, phone, address, city, country)
+  VALUES ('SUP-CRT', 'Creightons PLC UK', 'Sales Care', 'orders@creightons.com', '+44 1733 372900', 'Waterloo Road', 'Peterborough', 'UK')
+  ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+  RETURNING id
+`);
+const supplierCRTId = supCRT.id;
+
+const [supKSC] = await runQuery(() => sql`
+  INSERT INTO supplier (code, name, contact_person, email, phone, address, city, country)
+  VALUES ('SUP-KSC', 'K-Secret Skincare Korea', 'Global Sales', 'info@k-secret.com', '+82 2 888 9910', 'Gangnam-gu', 'Seoul', 'South Korea')
+  ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+  RETURNING id
+`);
+const supplierKSCId = supKSC.id;
+
+const [supOGX] = await runQuery(() => sql`
+  INSERT INTO supplier (code, name, contact_person, email, phone, address, city, country)
+  VALUES ('SUP-OGX', 'Vogue International (OGX USA)', 'Sales Desk', 'orders@ogxbeauty.com', '+1 800 252 4765', '405 Clearwater Tower', 'Clearwater', 'USA')
+  ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+  RETURNING id
+`);
+const supplierOGXId = supOGX.id;
+
+const [supSNS] = await runQuery(() => sql`
+  INSERT INTO supplier (code, name, contact_person, email, phone, address, city, country)
+  VALUES ('SUP-SNS', 'Haleon Healthcare (Sensodyne)', 'Customer Care', 'orders@haleon.com', '+1 800 245 1040', '184 Liberty Corner Rd', 'Warren', 'USA')
+  ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+  RETURNING id
+`);
+const supplierSNSId = supSNS.id;
+
+const [supSMP] = await runQuery(() => sql`
+  INSERT INTO supplier (code, name, contact_person, email, phone, address, city, country)
+  VALUES ('SUP-SMP', 'Unilever UK (Simple Skincare)', 'Export Sales', 'orders@simple.co.uk', '+44 800 028 0020', '100 Victoria Embankment', 'London', 'UK')
+  ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+  RETURNING id
+`);
+const supplierSMPId = supSMP.id;
+
+const [supSLG] = await runQuery(() => sql`
+  INSERT INTO supplier (code, name, contact_person, email, phone, address, city, country)
+  VALUES ('SUP-SLG', 'Solgar Inc USA', 'Customer Care', 'support@solgar.com', '+1 800 645 2246', '500 Willow Tree Rd', 'Leonia', 'USA')
+  ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+  RETURNING id
+`);
+const supplierSLGId = supSLG.id;
+
+const [supTAM] = await runQuery(() => sql`
+  INSERT INTO supplier (code, name, contact_person, email, phone, address, city, country)
+  VALUES ('SUP-TAM', 'TIA''M Skincare Korea', 'Global Desk', 'contact@tiam.co.kr', '+82 2 543 9012', 'Secho-gu', 'Seoul', 'South Korea')
+  ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+  RETURNING id
+`);
+const supplierTAMId = supTAM.id;
+
+const [supVET] = await runQuery(() => sql`
+  INSERT INTO supplier (code, name, contact_person, email, phone, address, city, country)
+  VALUES ('SUP-VET', 'Reckitt Benckiser (Veet)', 'Customer Care', 'orders@veet.com', '+1 800 228 4722', '103 Jackson Rd', 'Parsippany', 'USA')
+  ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+  RETURNING id
+`);
+const supplierVETId = supVET.id;
+
+const [supWDR] = await runQuery(() => sql`
+  INSERT INTO supplier (code, name, contact_person, email, phone, address, city, country)
+  VALUES ('SUP-WDR', 'Weider Health & Fitness USA', 'Customer Care', 'support@weider.com', '+1 800 423 5700', '2000 M-73', 'Salt Lake City', 'USA')
+  ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+  RETURNING id
+`);
+const supplierWDRId = supWDR.id;
+
 // Categories
 let suppCategories = await runQuery(() => sql`SELECT id FROM category WHERE slug = 'supplements-wellness'`);
 let suppCategoryId = suppCategories.length ? suppCategories[0].id : null;
@@ -362,105 +450,36 @@ if (!skinCategoryId) {
 }
 
 const extractedProducts = [
-  // Set 18 Products
+  // Set 23 New Products
   {
-    sku: 'TRM-ODLR-16TB',
-    barcode: '032917999018',
-    name: 'Traditional Medicinals Organic Dandelion Leaf & Root Tea (16 Tea Bags)',
-    genericName: 'Organic Dandelion Leaf & Root Herbal Tea',
-    description: 'Daily herbal tea for detox + kidney health. Balanced & earthy flavor. USDA Organic & Caffeine free. 16 Wrapped Tea Bags.',
+    sku: 'WDR-AHKD-90C',
+    barcode: '041617002888',
+    name: 'WEIDER Artery Health Vitamin K2 180 mcg + Vitamin D3 5000 IU (90 Veggie Caps)',
+    genericName: 'Vitamin K2 180 mcg & Vitamin D3 5000 IU Artery & Bone Support',
+    description: 'Supports heart, bone & immune health. Formulated with 180 mcg Vitamin K2 and 5000 IU Vitamin D3. 90 Veggie Caps.',
     categoryId: suppCategoryId,
-    primarySupplierId: supplierTRMId,
+    primarySupplierId: supplierWDRId,
     type: 'supplement',
-    costPricePesewas: 8000,
-    sellingPricePesewas: 12000,
-    unit: 'box',
-    packSize: 16,
-    dosageForm: 'Tea Bags',
-    strength: 'Organic Dandelion Leaf & Root',
-    manufacturer: 'Traditional Medicinals',
+    costPricePesewas: 18000,
+    sellingPricePesewas: 26000,
+    unit: 'bottle',
+    packSize: 90,
+    dosageForm: 'Capsule',
+    strength: 'K2 180 mcg + D3 5000 IU',
+    manufacturer: 'Weider Health & Fitness',
     countryOfOrigin: 'USA',
     reorderPoint: 5,
     reorderQty: 10,
     initialQty: 20,
-    batchNumber: 'LOT-TRM-2026-DLR',
-    imageUrl: '/products/traditional-medicinals-organic-dandelion-leaf-root-tea-16tb.png',
+    batchNumber: 'LOT-WDR-2026-AH',
+    imageUrl: '/products/weider-artery-health-vitamin-k2-d3-90c.png',
   },
   {
-    sku: 'PNX-AFW10-156G',
-    barcode: '310742010588',
-    name: 'PanOxyl Acne Foaming Wash 10% Benzoyl Peroxide (156 g)',
-    genericName: '10% Benzoyl Peroxide Maximum Strength Acne Wash',
-    description: 'Maximum strength 10% Benzoyl Peroxide acne treatment wash for face & body. Clears existing acne and prevents new breakouts. 5.5 oz (156 g).',
-    categoryId: skinCategoryId,
-    primarySupplierId: supplierPNXId,
-    type: 'beauty',
-    costPricePesewas: 14000,
-    sellingPricePesewas: 20000,
-    unit: 'box',
-    packSize: 1,
-    dosageForm: 'Foaming Wash',
-    strength: '10% Benzoyl Peroxide',
-    manufacturer: 'Crown Laboratories (PanOxyl)',
-    countryOfOrigin: 'USA',
-    reorderPoint: 5,
-    reorderQty: 10,
-    initialQty: 25,
-    batchNumber: 'LOT-PNX-2026-FW10',
-    imageUrl: '/products/panoxyl-acne-foaming-wash-10-156g.png',
-  },
-  {
-    sku: 'PNX-ACW4-170G',
-    barcode: '310742004088',
-    name: 'PanOxyl Acne Creamy Wash 4% Benzoyl Peroxide (170 g)',
-    genericName: '4% Benzoyl Peroxide Daily Control Acne Wash',
-    description: 'Daily control 4% Benzoyl Peroxide acne treatment wash for face & body. Formulated to be gentle on skin. 6 oz (170 g).',
-    categoryId: skinCategoryId,
-    primarySupplierId: supplierPNXId,
-    type: 'beauty',
-    costPricePesewas: 14000,
-    sellingPricePesewas: 20000,
-    unit: 'box',
-    packSize: 1,
-    dosageForm: 'Creamy Wash',
-    strength: '4% Benzoyl Peroxide',
-    manufacturer: 'Crown Laboratories (PanOxyl)',
-    countryOfOrigin: 'USA',
-    reorderPoint: 5,
-    reorderQty: 10,
-    initialQty: 25,
-    batchNumber: 'LOT-PNX-2026-CW4',
-    imageUrl: '/products/panoxyl-acne-creamy-wash-4-170g.png',
-  },
-  {
-    sku: 'NOW-VD3-120S',
-    barcode: '733739003788',
-    name: 'NOW Foods High Potency Vitamin D3 10,000 IU (120 Softgels)',
-    genericName: 'High Potency Vitamin D3 10,000 IU Softgels',
-    description: 'Bone & immune health support, healthy teeth & muscle health. High potency 10,000 IU. 120 Softgels.',
-    categoryId: suppCategoryId,
-    primarySupplierId: supplierNOWId,
-    type: 'supplement',
-    costPricePesewas: 15000,
-    sellingPricePesewas: 22000,
-    unit: 'bottle',
-    packSize: 120,
-    dosageForm: 'Softgel',
-    strength: '10,000 IU Vitamin D3',
-    manufacturer: 'NOW Foods',
-    countryOfOrigin: 'USA',
-    reorderPoint: 5,
-    reorderQty: 10,
-    initialQty: 25,
-    batchNumber: 'LOT-NOW-2026-VD3',
-    imageUrl: '/products/now-foods-high-potency-vitamin-d3-10000iu-120s.png',
-  },
-  {
-    sku: 'VIT-PMAX-84T',
-    barcode: '5021265225888',
-    name: 'Vitabiotics Perfectil MAX Maximum Support (84 Dual Pack)',
-    genericName: 'Perfectil MAX Biotin, Zinc & Selenium Triple Support',
-    description: 'UK\'s No. 1 Beauty Supplement Brand. Maximum support for skin, hair & nails with Biotin, Zinc, Selenium & Omega 3-6. 84 Dual Pack.',
+    sku: 'VIT-WMAX-84T',
+    barcode: '5021265224020',
+    name: 'Vitabiotics Wellman MAX Maximum Support Triple Pack (84 Dual Pack)',
+    genericName: 'Wellman MAX Micronutrients, Omega 3-6-9 & Calcium/D3 Triple Pack',
+    description: 'UK\'s No. 1 for Men. Over 30 nutrients for health & vitality: Micronutrient tablets, Omega 3-6-9 capsules, and Calcium & Vit. D tablets. 84 Pack.',
     categoryId: suppCategoryId,
     primarySupplierId: supplierVITId,
     type: 'supplement',
@@ -469,14 +488,14 @@ const extractedProducts = [
     unit: 'box',
     packSize: 84,
     dosageForm: 'Tablet/Capsule',
-    strength: 'Biotin + Zinc + Selenium + Omega 3-6',
+    strength: '30+ Nutrients (Micronutrients + Omega 3-6-9 + Calcium/D3)',
     manufacturer: 'Vitabiotics',
     countryOfOrigin: 'UK',
     reorderPoint: 5,
     reorderQty: 10,
     initialQty: 18,
-    batchNumber: 'LOT-VIT-2026-PMAX',
-    imageUrl: '/products/vitabiotics-perfectil-max-maximum-support-84t.png',
+    batchNumber: 'LOT-VIT-2026-WMAX',
+    imageUrl: '/products/vitabiotics-wellman-max-maximum-support-84t.png',
   },
 ];
 
@@ -544,4 +563,4 @@ for (const p of extractedProducts) {
   console.log(`✅ Product seeded/updated: ${p.name} (SKU: ${p.sku})`);
 }
 
-console.log('\n🎉 Successfully seeded Set 18 extracted inventory products!');
+console.log('\n🎉 Successfully seeded Set 23 extracted inventory products!');
