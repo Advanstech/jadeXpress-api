@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Put, Patch, Body, Param, Query, HttpCode, HttpStatus,
+  Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, HttpCode, HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { InventoryService } from './inventory.service';
@@ -88,6 +88,13 @@ export class InventoryController {
     @Body(new ZodValidationPipe(UpdateProductSchema)) dto: UpdateProductDto,
   ) {
     return this.inventoryService.updateProduct(id, dto);
+  }
+
+  @Delete('products/:id')
+  @Roles('manager', 'owner', 'stock_officer')
+  @ApiOperation({ summary: 'Delete product' })
+  deleteProduct(@Param('id') id: string) {
+    return this.inventoryService.deleteProduct(id);
   }
 
   // ── Stock Items ────────────────────────────────────────────────────────────

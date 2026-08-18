@@ -177,6 +177,22 @@ export class InventoryService {
     return product;
   }
 
+  async deleteProduct(id: string) {
+    const existing = await this.db.select({ id: products.id, name: products.name }).from(products).where(eq(products.id, id)).limit(1);
+    if (!existing.length) {
+      throw new NotFoundException('Product not found');
+    }
+
+    // Clean up dependent stock records first to satisfy foreign key constraints
+    await this.db.delete(stockAlerts).where(eq(stockAlerts.productId, id));
+    await this.db.delete(stockMovements).where(eq(stockMovements.productId, id));
+    await this.db.delete(stockBatches).where(eq(stockBatches.productId, id));
+    await this.db.delete(stockItems).where(eq(stockItems.productId, id));
+
+    const [deleted] = await this.db.delete(products).where(eq(products.id, id)).returning();
+    return { success: true, message: `Product '${deleted?.name ?? id}' deleted successfully` };
+  }
+
   // ── Stock Items (per-store) ────────────────────────────────────────────────
   async getStockItem(productId: string, storeId: string) {
     const [item] = await this.db
