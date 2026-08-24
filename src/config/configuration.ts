@@ -3,7 +3,7 @@ export default () => ({
     nodeEnv: process.env.NODE_ENV ?? 'development',
     port: parseInt(process.env.PORT ?? '3001', 10),
     apiPrefix: process.env.API_PREFIX ?? 'api/v1',
-    corsOrigins: (process.env.CORS_ORIGINS ?? 'http://localhost:3000').split(','),
+    corsOrigins: (process.env.CORS_ORIGINS ?? 'http://localhost:3000,http://localhost:3002').split(','),
   },
   database: {
     url: process.env.DATABASE_URL!,
@@ -26,5 +26,16 @@ export default () => ({
   },
   upload: {
     maxFileSizeMb: parseInt(process.env.MAX_FILE_SIZE_MB ?? '10', 10),
+  },
+  payments: {
+    paystackSecretKey: process.env.PAYSTACK_SECRET_KEY,
+    paystackPublicKey: process.env.PAYSTACK_PUBLIC_KEY,
+    paystackCallbackUrl: process.env.PAYSTACK_CALLBACK_URL,
+    momoApiUser: process.env.MOMO_API_USER,
+    momoApiKey: process.env.MOMO_API_KEY,
+    momoSubscriptionKey: process.env.MOMO_SUBSCRIPTION_KEY,
+    momoBaseUrl:
+      process.env.MOMO_BASE_URL ?? 'https://sandbox.momodeveloper.mtn.com',
+    momoEnvironment: process.env.MOMO_ENVIRONMENT ?? 'sandbox',
   },
 });
