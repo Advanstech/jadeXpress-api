@@ -36,6 +36,10 @@ export class InventoryService {
     return this.db.select().from(categories).where(eq(categories.isActive, true)).orderBy(asc(categories.name));
   }
 
+  async getPublicCategories() {
+    return this.db.select().from(categories).where(eq(categories.isActive, true)).orderBy(asc(categories.name));
+  }
+
   async createCategory(dto: CreateCategoryDto) {
     const [cat] = await this.db.insert(categories).values(dto).returning();
     return cat;
@@ -116,6 +120,53 @@ export class InventoryService {
     return paginate(uniqueData, count, page, limit);
   }
 
+  async getPublicProducts(query: PaginationDto & { type?: string; categoryId?: string }) {
+    const { page = 1, limit = 20, search, type, categoryId } = query;
+    const offset = (page - 1) * limit;
+
+    const conditions: any[] = [];
+    if (search) {
+      conditions.push(
+        or(
+          ilike(products.name, `%${search}%`),
+          ilike(products.sku, `%${search}%`),
+          ilike(products.genericName ?? '', `%${search}%`),
+        ),
+      );
+    }
+    if (type) conditions.push(eq(products.type, type as any));
+    if (categoryId) conditions.push(eq(products.categoryId, categoryId));
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const query$ = this.db
+      .select({ product: products, category: categories })
+      .from(products)
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .where(whereClause)
+      .limit(limit)
+      .offset(offset);
+
+    const countQuery$ = this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(products)
+      .where(whereClause);
+
+    const [data, countResult] = await Promise.all([query$, countQuery$]);
+
+    const mappedData = data.map(row => ({
+      ...row.product,
+      category: row.category?.name ?? null,
+      categoryName: row.category?.name ?? null,
+      categoryId: row.product.categoryId,
+      categoryObj: row.category ?? null,
+      quantity: 0,
+      stockLevel: 0,
+    }));
+
+    return paginate(mappedData, Number(countResult[0]?.count ?? 0), page, limit);
+  }
+
   async getProductById(id: string) {
     const [product] = await this.db
       .select()
@@ -124,6 +175,10 @@ export class InventoryService {
       .limit(1);
     if (!product) throw new NotFoundException('Product not found');
     return product;
+  }
+
+  async getPublicProductById(id: string) {
+    return this.getProductById(id);
   }
 
   async getProductByBarcode(barcode: string) {
