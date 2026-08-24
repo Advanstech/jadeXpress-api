@@ -15,30 +15,24 @@ export class PaymentsController {
   @Public()
   @Post('paystack/initialize')
   async initializePaystack(@Body() dto: InitializePaystackDto) {
-    const result = await this.paymentsService.initializePaystack(dto);
-    return { success: true, data: result };
+    return this.paymentsService.initializePaystack(dto);
   }
 
   @Public()
   @Get('paystack/verify/:reference')
   async verifyPaystack(@Param('reference') reference: string) {
-    const result = await this.paymentsService.verifyPaystack(reference);
-    return { success: true, data: result };
+    return this.paymentsService.verifyPaystack(reference);
   }
 
   @Public()
   @Post('momo/request')
   async requestMomo(@Body() dto: RequestMomoDto) {
-    const result = await this.paymentsService.requestMomo(dto);
-    return { success: true, data: result };
+    return this.paymentsService.requestMomo(dto);
   }
 
   @Public()
   @Get('paystack/key')
   getPaystackPublicKey() {
-    return {
-      success: true,
-      data: { publicKey: this.config.get('payments.paystackPublicKey') },
-    };
+    return { publicKey: this.config.get('payments.paystackPublicKey') };
   }
 }
