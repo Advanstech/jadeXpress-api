@@ -28,6 +28,10 @@ export const customers = pgTable(
     lastName: varchar('last_name', { length: 100 }),
     phone: varchar('phone', { length: 30 }).unique(),
     email: varchar('email', { length: 255 }).unique(),
+    // Online storefront authentication (nullable — walk-in POS customers have no login)
+    passwordHash: varchar('password_hash', { length: 255 }),
+    emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
+    avatarUrl: text('avatar_url'),
     dateOfBirth: date('date_of_birth'),
     gender: varchar('gender', { length: 20 }),
     address: text('address'),

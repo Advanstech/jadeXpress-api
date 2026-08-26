@@ -207,3 +207,18 @@ export const prescriptionStatusEnum = pgEnum('prescription_status', [
   'cancelled',
   'expired',
 ]);
+
+// ─── Storefront (online orders) ──────────────────────────────────────────────
+export const storefrontOrderStatusEnum = pgEnum('storefront_order_status', [
+  'pending',
+  'processing',
+  'shipped',
+  'delivered',
+  'cancelled',
+]);
+
+export const storefrontPaymentStatusEnum = pgEnum('storefront_payment_status', [
+  'unpaid',
+  'paid',
+  'demo',
+]);

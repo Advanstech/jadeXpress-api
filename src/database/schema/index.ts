@@ -18,6 +18,7 @@
  * 11. notifications  (depends on organisation, staff)
  * 12. eod            (depends on organisation, staff)
  * 13. audit          (depends on organisation, staff)
+ * 14. storefront     (depends on customers, inventory, organisation)
  */
 
 export * from './enums';
@@ -26,6 +27,7 @@ export * from './staff';
 export * from './suppliers';
 export * from './inventory';
 export * from './customers';
+export * from './storefront';
 export * from './sales';
 export * from './expenses';
 export * from './accounting';

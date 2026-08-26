@@ -43,6 +43,13 @@
       "when": 1785022122565,
       "tag": "0005_serious_jackpot",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787600637290,
+      "tag": "0007_orange_bullseye",
+      "breakpoints": true
     }
   ]
 }

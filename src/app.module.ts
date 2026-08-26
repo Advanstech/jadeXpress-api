@@ -27,6 +27,7 @@ import { EmailModule } from './modules/email/email.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
 import { InvoicingModule } from './modules/invoicing/invoicing.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { StorefrontModule } from './modules/storefront/storefront.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
     PayrollModule,
     InvoicingModule,
     PaymentsModule,
+    StorefrontModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

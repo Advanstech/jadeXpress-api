@@ -120,15 +120,30 @@ export class InventoryService {
     return paginate(uniqueData, count, page, limit);
   }
 
-  async getPublicProducts(query: PaginationDto & { type?: string; categoryId?: string }) {
-    const { page = 1, limit = 20, search, type, categoryId } = query;
+  async getPublicProducts(
+    query: PaginationDto & {
+      type?: string;
+      categoryId?: string;
+      categorySlug?: string;
+      brand?: string;
+      maxPrice?: number;
+      featured?: boolean;
+      bestseller?: boolean;
+      sort?: 'featured' | 'price-asc' | 'price-desc' | 'rating' | 'newest';
+    },
+  ) {
+    const {
+      page = 1, limit = 20, search, type, categoryId, categorySlug,
+      brand, maxPrice, featured, bestseller, sort,
+    } = query;
     const offset = (page - 1) * limit;
 
-    const conditions: any[] = [];
+    const conditions: any[] = [eq(products.status, 'active')];
     if (search) {
       conditions.push(
         or(
           ilike(products.name, `%${search}%`),
+          ilike(products.brand ?? '', `%${search}%`),
           ilike(products.sku, `%${search}%`),
           ilike(products.genericName ?? '', `%${search}%`),
         ),
@@ -136,28 +151,52 @@ export class InventoryService {
     }
     if (type) conditions.push(eq(products.type, type as any));
     if (categoryId) conditions.push(eq(products.categoryId, categoryId));
+    if (categorySlug) conditions.push(eq(categories.slug, categorySlug));
+    if (brand) conditions.push(eq(products.brand, brand));
+    if (typeof maxPrice === 'number') conditions.push(lte(products.sellingPricePesewas, maxPrice));
+    if (featured) conditions.push(eq(products.isFeatured, true));
+    if (bestseller) conditions.push(eq(products.isBestseller, true));
 
-    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    const whereClause = and(...conditions);
 
-    const query$ = this.db
+    let query$ = this.db
       .select({ product: products, category: categories })
       .from(products)
       .leftJoin(categories, eq(products.categoryId, categories.id))
       .where(whereClause)
       .limit(limit)
-      .offset(offset);
+      .offset(offset) as any;
+
+    switch (sort) {
+      case 'price-asc':
+        query$ = query$.orderBy(asc(products.sellingPricePesewas));
+        break;
+      case 'price-desc':
+        query$ = query$.orderBy(desc(products.sellingPricePesewas));
+        break;
+      case 'rating':
+        query$ = query$.orderBy(desc(products.rating));
+        break;
+      case 'newest':
+        query$ = query$.orderBy(desc(products.createdAt));
+        break;
+      default:
+        query$ = query$.orderBy(desc(products.isFeatured), desc(products.createdAt));
+    }
 
     const countQuery$ = this.db
       .select({ count: sql<number>`count(*)` })
       .from(products)
+      .leftJoin(categories, eq(products.categoryId, categories.id))
       .where(whereClause);
 
     const [data, countResult] = await Promise.all([query$, countQuery$]);
 
-    const mappedData = data.map(row => ({
+    const mappedData = data.map((row: any) => ({
       ...row.product,
       category: row.category?.name ?? null,
       categoryName: row.category?.name ?? null,
+      categorySlug: row.category?.slug ?? null,
       categoryId: row.product.categoryId,
       categoryObj: row.category ?? null,
       quantity: 0,
@@ -165,6 +204,14 @@ export class InventoryService {
     }));
 
     return paginate(mappedData, Number(countResult[0]?.count ?? 0), page, limit);
+  }
+
+  async getBrands() {
+    const rows = await this.db
+      .selectDistinct({ brand: products.brand })
+      .from(products)
+      .where(and(eq(products.status, 'active')));
+    return rows.map((r) => r.brand).filter((b): b is string => !!b).sort();
   }
 
   async getProductById(id: string) {
@@ -179,6 +226,22 @@ export class InventoryService {
 
   async getPublicProductById(id: string) {
     return this.getProductById(id);
+  }
+
+  async getPublicProductBySlug(slug: string) {
+    const [row] = await this.db
+      .select({ product: products, category: categories })
+      .from(products)
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .where(eq(products.slug, slug))
+      .limit(1);
+    if (!row) throw new NotFoundException('Product not found');
+    return {
+      ...row.product,
+      category: row.category?.name ?? null,
+      categoryName: row.category?.name ?? null,
+      categorySlug: row.category?.slug ?? null,
+    };
   }
 
   async getProductByBarcode(barcode: string) {

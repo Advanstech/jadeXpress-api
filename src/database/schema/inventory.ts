@@ -21,6 +21,7 @@ import {
   timestamp,
   date,
   jsonb,
+  doublePrecision,
   index,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
@@ -42,6 +43,8 @@ export const categories = pgTable('category', {
   name: varchar('name', { length: 150 }).notNull().unique(),
   slug: varchar('slug', { length: 150 }).notNull().unique(),
   description: text('description'),
+  tagline: varchar('tagline', { length: 255 }),
+  imageUrl: text('image_url'),
   parentId: uuid('parent_id'), // self-ref for sub-categories
   iconUrl: text('icon_url'),
   sortOrder: integer('sort_order').notNull().default(0),
@@ -56,9 +59,12 @@ export const products = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     sku: varchar('sku', { length: 100 }).notNull().unique(),
     barcode: varchar('barcode', { length: 100 }).unique(),
+    slug: varchar('slug', { length: 255 }).unique(),
     name: varchar('name', { length: 255 }).notNull(),
     genericName: varchar('generic_name', { length: 255 }), // for supplements / future Rx
+    brand: varchar('brand', { length: 150 }),
     description: text('description'),
+    shortDescription: varchar('short_description', { length: 500 }),
     categoryId: uuid('category_id').references(() => categories.id),
     primarySupplierId: uuid('primary_supplier_id').references(() => suppliers.id),
     type: productTypeEnum('type').notNull().default('supplement'),
@@ -73,6 +79,17 @@ export const products = pgTable(
     unit: varchar('unit', { length: 50 }).notNull().default('piece'),
     packSize: integer('pack_size').notNull().default(1), // e.g. 30 capsules per pack
     imageUrl: text('image_url'),
+    // Storefront gallery (multiple images) — imageUrl above stays as legacy/primary fallback
+    images: jsonb('images').$type<string[]>().default([]),
+    // Online storefront merchandising
+    isFeatured: boolean('is_featured').notNull().default(false),
+    isBestseller: boolean('is_bestseller').notNull().default(false),
+    rating: doublePrecision('rating').notNull().default(0),
+    reviewCount: integer('review_count').notNull().default(0),
+    ingredients: text('ingredients'),
+    usageInstructions: text('usage_instructions'),
+    benefits: jsonb('benefits').$type<string[]>().default([]),
+    compareAtPricePesewas: integer('compare_at_price_pesewas'),
 
     // Supplement / OTC specific fields
     dosageForm: varchar('dosage_form', { length: 100 }),   // tablet, capsule, liquid, powder
@@ -107,6 +124,7 @@ export const products = pgTable(
   (t) => [
     index('product_sku_idx').on(t.sku),
     index('product_barcode_idx').on(t.barcode),
+    index('product_slug_idx').on(t.slug),
     index('product_category_idx').on(t.categoryId),
     index('product_type_idx').on(t.type),
   ],
