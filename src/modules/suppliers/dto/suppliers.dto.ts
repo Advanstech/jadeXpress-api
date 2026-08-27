@@ -31,6 +31,7 @@ export const CreatePurchaseOrderSchema = z.object({
   expectedDeliveryDate: z.string().date().optional(),
   items: z.array(PurchaseOrderItemSchema).min(1),
   notes: z.string().optional(),
+  approvedById: z.string().uuid().optional(),
 });
 
 export const ReceiveGoodsSchema = z.object({
@@ -46,7 +47,15 @@ export const ReceiveGoodsSchema = z.object({
   notes: z.string().optional(),
 });
 
+export const PayPurchaseOrderSchema = z.object({
+  amountPesewas: z.number().int().positive(),
+  paymentMethod: z.enum(['cash', 'bank', 'momo', 'cheque']).default('bank'),
+  reference: z.string().max(100).optional(),
+  notes: z.string().optional(),
+});
+
 export type CreateSupplierDto = z.infer<typeof CreateSupplierSchema>;
 export type UpdateSupplierDto = z.infer<typeof UpdateSupplierSchema>;
 export type CreatePurchaseOrderDto = z.infer<typeof CreatePurchaseOrderSchema>;
 export type ReceiveGoodsDto = z.infer<typeof ReceiveGoodsSchema>;
+export type PayPurchaseOrderDto = z.infer<typeof PayPurchaseOrderSchema>;

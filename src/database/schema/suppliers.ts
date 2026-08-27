@@ -19,6 +19,7 @@ import { relations } from 'drizzle-orm';
 import {
   purchaseOrderStatusEnum,
   supplierPerformanceRatingEnum,
+  paymentStatusEnum,
 } from './enums';
 import { stores } from './organisation';
 import { staffProfile } from './staff';
@@ -73,6 +74,9 @@ export const purchaseOrders = pgTable(
     subtotalPesewas: integer('subtotal_pesewas').notNull().default(0),
     taxPesewas: integer('tax_pesewas').notNull().default(0),
     totalPesewas: integer('total_pesewas').notNull().default(0),
+    paidAmountPesewas: integer('paid_amount_pesewas').notNull().default(0),
+    balancePesewas: integer('balance_pesewas').notNull().default(0),
+    paymentStatus: paymentStatusEnum('payment_status').notNull().default('pending'),
     notes: text('notes'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),

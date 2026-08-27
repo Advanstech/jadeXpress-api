@@ -11,6 +11,7 @@ import {
   expenses,
   staffProfile,
   plSnapshots,
+  purchaseOrders,
 } from '../../database/schema';
 
 @Injectable()
@@ -27,7 +28,7 @@ export class DashboardService {
     monthStart.setDate(1);
     monthStart.setHours(0, 0, 0, 0);
 
-    const [todayRevenue, monthRevenue, stockAlertCount, newCustomers, lowStockCount, totalStockCount] =
+    const [todayRevenue, monthRevenue, stockAlertCount, newCustomers, lowStockCount, totalStockCount, accountsPayable] =
       await Promise.all([
         // Today's revenue
         this.db
@@ -85,6 +86,24 @@ export class DashboardService {
           .from(stockItems)
           .where(eq(stockItems.storeId, storeId))
           .then((r) => Number(r[0].count)),
+
+        // Accounts Payable (Total Outstanding Balance to Suppliers)
+        this.db
+          .select({
+            totalBalance: sql<number>`coalesce(sum(${purchaseOrders.balancePesewas}), 0)`,
+            overdueCount: sql<number>`count(case when ${purchaseOrders.expectedDeliveryDate} < CURRENT_DATE then 1 end)`,
+          })
+          .from(purchaseOrders)
+          .where(
+            and(
+              eq(purchaseOrders.storeId, storeId),
+              sql`${purchaseOrders.balancePesewas} > 0`
+            )
+          )
+          .then((r) => ({
+            totalBalance: Number(r[0].totalBalance),
+            overdueCount: Number(r[0].overdueCount)
+          })),
       ]);
 
     // Revenue trend: today vs same day last week
@@ -127,6 +146,10 @@ export class DashboardService {
         totalProducts: totalStockCount,
         stockHealthIndex,
       },
+      finance: {
+        accountsPayablePesewas: accountsPayable.totalBalance,
+        overduePayablesCount: accountsPayable.overdueCount,
+      }
     };
   }
 

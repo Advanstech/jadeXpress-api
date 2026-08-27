@@ -6,10 +6,18 @@ import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.de
 import { Roles } from '../../common/decorators/roles.decorator';
 import { PaginationSchema } from '../../common/dto/pagination.dto';
 import {
-  CreateSupplierSchema, CreateSupplierDto,
-  UpdateSupplierSchema, UpdateSupplierDto,
-  CreatePurchaseOrderSchema, CreatePurchaseOrderDto,
-  ReceiveGoodsSchema, ReceiveGoodsDto,
+  CreateSupplierSchema,
+  UpdateSupplierSchema,
+  CreatePurchaseOrderSchema,
+  ReceiveGoodsSchema,
+  PayPurchaseOrderSchema,
+} from './dto/suppliers.dto';
+import type {
+  CreateSupplierDto,
+  UpdateSupplierDto,
+  CreatePurchaseOrderDto,
+  ReceiveGoodsDto,
+  PayPurchaseOrderDto,
 } from './dto/suppliers.dto';
 
 @ApiTags('suppliers')
@@ -87,5 +95,16 @@ export class SuppliersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.suppliersService.receiveGoods(dto, user.sub);
+  }
+
+  @Post('purchase-orders/:id/pay')
+  @Roles('manager', 'owner')
+  @ApiOperation({ summary: 'Record a payment against a purchase order' })
+  payPurchaseOrder(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(PayPurchaseOrderSchema)) dto: PayPurchaseOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.suppliersService.payPurchaseOrder(id, dto, user.sub);
   }
 }

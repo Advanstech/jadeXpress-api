@@ -10,12 +10,14 @@ import {
   stockItems,
   stockMovements,
   categories,
+  ledgerEntries,
 } from '../../database/schema';
 import { products } from '../../database/schema/inventory';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type {
   CreateSupplierDto, UpdateSupplierDto,
   CreatePurchaseOrderDto, ReceiveGoodsDto,
+  PayPurchaseOrderDto,
 } from './dto/suppliers.dto';
 
 @Injectable()
@@ -151,8 +153,12 @@ export class SuppliersService {
         storeId: dto.storeId,
         supplierId: dto.supplierId,
         raisedById,
+        approvedById: dto.approvedById,
         subtotalPesewas: subtotal,
         totalPesewas: subtotal,
+        paidAmountPesewas: 0,
+        balancePesewas: subtotal,
+        paymentStatus: 'pending',
         notes: dto.notes,
         expectedDeliveryDate: dto.expectedDeliveryDate,
       }).returning();
@@ -296,5 +302,67 @@ export class SuppliersService {
     });
 
     return { success: true, purchaseOrderId: po.id };
+  }
+
+  async payPurchaseOrder(id: string, dto: PayPurchaseOrderDto, staffId: string) {
+    const [po] = await this.db
+      .select()
+      .from(purchaseOrders)
+      .where(eq(purchaseOrders.id, id))
+      .limit(1);
+
+    if (!po) throw new NotFoundException('Purchase order not found');
+    if (dto.amountPesewas > po.balancePesewas && po.balancePesewas > 0) {
+      throw new Error(`Payment amount cannot exceed balance of ${po.balancePesewas}`);
+    }
+
+    const newPaidAmount = po.paidAmountPesewas + dto.amountPesewas;
+    const newBalance = Math.max(0, po.totalPesewas - newPaidAmount);
+    const newStatus = newBalance === 0 ? 'paid' : 'partial';
+
+    return await this.db.transaction(async (tx) => {
+      // 1. Update PO balances
+      await tx
+        .update(purchaseOrders)
+        .set({
+          paidAmountPesewas: newPaidAmount,
+          balancePesewas: newBalance,
+          paymentStatus: newStatus,
+          updatedAt: new Date(),
+        })
+        .where(eq(purchaseOrders.id, id));
+
+      // 2. Ledger Entry (Debit AP)
+      await tx.insert(ledgerEntries).values({
+        storeId: po.storeId,
+        entryType: 'debit',
+        category: 'expense',
+        amountPesewas: dto.amountPesewas,
+        referenceType: 'SUPPLIER_PAYMENT',
+        referenceId: dto.reference || `PAY-${Date.now().toString().slice(-6)}`,
+        description: `Supplier Payment (AP Reduction) for PO ${po.poNumber} via ${dto.paymentMethod.toUpperCase()}`,
+        performedById: staffId,
+      });
+
+      // 3. Ledger Entry (Credit Cash/Bank)
+      await tx.insert(ledgerEntries).values({
+        storeId: po.storeId,
+        entryType: 'credit',
+        category: 'expense',
+        amountPesewas: dto.amountPesewas,
+        referenceType: 'SUPPLIER_PAYMENT',
+        referenceId: dto.reference || `PAY-${Date.now().toString().slice(-6)}`,
+        description: `Supplier Payment (Cash Outflow) for PO ${po.poNumber} via ${dto.paymentMethod.toUpperCase()}`,
+        performedById: staffId,
+      });
+
+      return {
+        success: true,
+        purchaseOrderId: po.id,
+        paidAmountPesewas: newPaidAmount,
+        balancePesewas: newBalance,
+        paymentStatus: newStatus,
+      };
+    });
   }
 }
