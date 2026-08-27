@@ -171,7 +171,7 @@ export class AiService {
     if (geminiKey && geminiKey.length > 5) {
       try {
         const genAI = new GoogleGenerativeAI(geminiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
 
         let rawBase64 = base64Image;
         let mimeType = 'image/jpeg';
@@ -208,7 +208,7 @@ Extract product details into a clean JSON object ONLY (no markdown formatting, n
           return {
             extractedData,
             confidence: 0.94,
-            source: 'gemini-vision-1.5-flash',
+            source: 'gemini-flash-latest',
             isMocked: false,
           };
         }
@@ -294,7 +294,7 @@ Extract product details into a clean JSON object ONLY (no markdown formatting, n
     if (geminiKey && geminiKey.length > 5 && imageUrl?.length > 10) {
       try {
         const genAI = new GoogleGenerativeAI(geminiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
 
         let rawBase64 = imageUrl;
         let mimeType = 'image/jpeg';
@@ -345,7 +345,69 @@ Return monetary values as integer Ghanaian pesewas (1 GHS = 100 pesewas). For a 
         console.warn('[AI OCR] Gemini extraction failed:', err?.message);
       }
     } else {
-      console.warn('[AI OCR] No valid GEMINI_API_KEY or image payload — using fallback mock');
+      console.warn('[AI OCR] No valid GEMINI_API_KEY or image payload — skipping Gemini');
+    }
+
+    // OpenAI Fallback
+    const openaiKey = this.config.get<string>('ai.openaiApiKey') || process.env.OPENAI_API_KEY;
+    if (openaiKey && openaiKey.length > 5 && imageUrl?.length > 10) {
+      try {
+        console.log('[AI OCR] Attempting extraction with OpenAI gpt-4o-mini...');
+        const OpenAI = require('openai').default;
+        const openai = new OpenAI({ apiKey: openaiKey });
+
+        let dataUrl = imageUrl;
+        if (!imageUrl.startsWith('data:image')) {
+          dataUrl = `data:image/jpeg;base64,${imageUrl}`;
+        }
+
+        const prompt = `Extract the supplier invoice from this image into a clean JSON object ONLY (no markdown, no code blocks, no explanation). Use this exact shape:
+{
+  "vendor": "supplier or company name",
+  "invoiceNumber": "invoice number",
+  "date": "YYYY-MM-DD",
+  "lineItems": [
+    { "description": "product name", "quantity": 0, "unitCost": 0, "total": 0 }
+  ],
+  "subtotal": 0,
+  "tax": 0,
+  "total": 0
+}
+Return monetary values as integer Ghanaian pesewas (1 GHS = 100 pesewas). For a price of GH₵10.40, return 1040. If a value is missing, use 0 or an empty string.`;
+
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: prompt },
+                { type: "image_url", image_url: { url: dataUrl } }
+              ]
+            }
+          ],
+          max_tokens: 1500,
+          response_format: { type: "json_object" }
+        });
+
+        const text = response.choices[0].message.content;
+        if (text) {
+          const extractedData = JSON.parse(text);
+          console.log('[AI OCR] OpenAI extraction succeeded');
+          return {
+            imageUrl,
+            extractedData,
+            confidence: 0.9,
+            source: 'openai-gpt-4o-mini',
+            isMocked: false,
+            requiresConfirmation: true,
+          };
+        }
+      } catch (err: any) {
+        console.warn('[AI OCR] OpenAI extraction failed:', err?.message);
+      }
+    } else {
+      console.warn('[AI OCR] No valid OPENAI_API_KEY or image payload — using fallback mock');
     }
 
     return {
@@ -452,7 +514,7 @@ Return monetary values as integer Ghanaian pesewas (1 GHS = 100 pesewas). For a 
     if (geminiKey && geminiKey.length > 5) {
       try {
         const genAI = new GoogleGenerativeAI(geminiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
 
         const prompt = `You are a retail counter assistant for a Ghanaian pharmacy & wellness shop.
 Give staff-facing guidance for this item so they can advise a walk-in customer.

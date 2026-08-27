@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, Query, BadRequestException } from '@nestjs
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AiService } from './ai.service';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
+import { Public } from '../../common/decorators/public.decorator';
 import { z } from 'zod';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { ProductIntelligenceSchema, ProductIntelligenceDto } from './dto/ai.dto';
@@ -85,6 +86,7 @@ export class AiController {
     return this.aiService.askTheShop(body.question, user.storeId);
   }
 
+  @Public()
   @Post('ocr')
   @ApiOperation({ summary: 'OCR extraction from supplier invoice/receipt image' })
   ocr(@Body(new ZodValidationPipe(OcrSchema)) body: { imageUrl?: string; base64Image?: string }) {
