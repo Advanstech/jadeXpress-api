@@ -176,7 +176,7 @@ export class AiService {
         let rawBase64 = base64Image;
         let mimeType = 'image/jpeg';
 
-        if (!rawBase64 && imageUrl?.startsWith('data:image')) {
+        if (!rawBase64 && imageUrl?.startsWith('data:')) {
           const parts = imageUrl.split(';base64,');
           mimeType = parts[0].replace('data:', '');
           rawBase64 = parts[1];
@@ -298,7 +298,7 @@ Extract product details into a clean JSON object ONLY (no markdown formatting, n
 
         let rawBase64 = imageUrl;
         let mimeType = 'image/jpeg';
-        if (imageUrl.startsWith('data:image')) {
+        if (imageUrl.startsWith('data:')) {
           const parts = imageUrl.split(';base64,');
           mimeType = parts[0].replace('data:', '');
           rawBase64 = parts[1];
@@ -357,7 +357,7 @@ Return monetary values as integer Ghanaian pesewas (1 GHS = 100 pesewas). For a 
         const openai = new OpenAI({ apiKey: openaiKey });
 
         let dataUrl = imageUrl;
-        if (!imageUrl.startsWith('data:image')) {
+        if (!imageUrl.startsWith('data:')) {
           dataUrl = `data:image/jpeg;base64,${imageUrl}`;
         }
 
