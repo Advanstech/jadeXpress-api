@@ -5,7 +5,7 @@ import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.de
 import { Public } from '../../common/decorators/public.decorator';
 import { z } from 'zod';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
-import { ProductIntelligenceSchema, ProductIntelligenceDto } from './dto/ai.dto';
+import { ProductIntelligenceSchema, ProductIntelligenceDto, MatchProductsSchema, MatchProductsDto } from './dto/ai.dto';
 
 const UpsellSchema = z.object({ cartProductIds: z.array(z.string().uuid()) });
 const NlSearchSchema = z.object({ query: z.string().min(1) });
@@ -129,6 +129,18 @@ export class AiController {
     @Body(new ZodValidationPipe(ProductIntelligenceSchema)) body: ProductIntelligenceDto,
   ) {
     return this.aiService.getProductIntelligence(body.productId, user.storeId);
+  }
+
+  @Post('match-products')
+  @ApiOperation({ summary: 'Match extracted product names to existing catalog items using Gemini' })
+  async matchProducts(
+    @Body(new ZodValidationPipe(MatchProductsSchema)) body: MatchProductsDto,
+  ) {
+    try {
+      return await this.aiService.matchProducts(body.extractedItems, body.catalog);
+    } catch (err: any) {
+      throw new BadRequestException(err?.message ?? 'Product matching failed');
+    }
   }
 
   @Post('perfect-image')

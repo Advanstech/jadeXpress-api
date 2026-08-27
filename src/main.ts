@@ -45,7 +45,7 @@ async function bootstrap() {
 
     // ── CORS ───────────────────────────────────────────────────────────────
     app.enableCors({
-      origin: corsOrigins,
+      origin: nodeEnv === 'production' ? corsOrigins : (origin, cb) => cb(null, true),
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     });

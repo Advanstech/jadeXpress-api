@@ -625,7 +625,57 @@ ${profile.sections.map((s) => `  - id "${s.id}", label "${s.label}" — ${s.prom
   }
 
   /**
-   * LIVE — OpenAI DALL-E 3 product image generation
+   * LIVE - Product Matching via Gemini 2.5 Flash
+   * Takes extracted OCR names and maps them to catalog IDs
+   */
+  async matchProducts(extractedItems: string[], catalog: { id: string; name: string; sku?: string | null }[]) {
+    const geminiKey = this.config.get<string>('ai.geminiApiKey') || process.env.GEMINI_API_KEY;
+    if (!geminiKey) {
+      throw new Error('GEMINI_API_KEY not configured');
+    }
+
+    try {
+      const genAI = new GoogleGenerativeAI(geminiKey);
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+        generationConfig: { responseMimeType: 'application/json' },
+      });
+
+      const prompt = `You are a retail inventory matching system.
+Map these extracted item names from a supplier invoice to the closest matching product in our catalog.
+If there is no logical match, return null for that item's matchedProductId.
+
+EXTRACTED ITEMS:
+${JSON.stringify(extractedItems, null, 2)}
+
+CATALOG (ID, NAME, SKU):
+${JSON.stringify(catalog, null, 2)}
+
+Respond with JSON ONLY in this exact shape:
+{
+  "matches": [
+    {
+      "extractedName": "exact string from extracted items array",
+      "matchedProductId": "uuid from catalog or null if no match",
+      "confidence": "high" | "medium" | "low"
+    }
+  ]
+}`;
+
+      const result = await model.generateContent(prompt);
+      let text = result.response.text().trim();
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        text = jsonMatch[0];
+      }
+      return JSON.parse(text);
+    } catch (err: any) {
+      console.error('[AI MATCH ERROR]', err?.message);
+      throw new Error('Product matching failed');
+    }
+  }
+
+  /**
    * Generates a photorealistic product photo for supplement/pharmacy items.
    */
   async generateProductImage(productName: string, description?: string, category?: string): Promise<{ imageUrl: string; model: string }> {
