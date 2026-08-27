@@ -171,7 +171,10 @@ export class AiService {
     if (geminiKey && geminiKey.length > 5) {
       try {
         const genAI = new GoogleGenerativeAI(geminiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+        const model = genAI.getGenerativeModel({
+          model: 'gemini-2.5-flash',
+          generationConfig: { responseMimeType: 'application/json' },
+        });
 
         let rawBase64 = base64Image;
         let mimeType = 'image/jpeg';
@@ -294,7 +297,10 @@ Extract product details into a clean JSON object ONLY (no markdown formatting, n
     if (geminiKey && geminiKey.length > 5 && imageUrl?.length > 10) {
       try {
         const genAI = new GoogleGenerativeAI(geminiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+        const model = genAI.getGenerativeModel({
+          model: 'gemini-2.5-flash',
+          generationConfig: { responseMimeType: 'application/json' },
+        });
 
         let rawBase64 = imageUrl;
         let mimeType = 'image/jpeg';
@@ -304,45 +310,59 @@ Extract product details into a clean JSON object ONLY (no markdown formatting, n
           rawBase64 = parts[1];
         }
 
-        const prompt = `Extract the supplier invoice from this image into a clean JSON object ONLY (no markdown, no code blocks, no explanation). Use this exact shape:
+        const prompt = `You are an expert OCR system specializing in retail supplier invoices, receipts, and official Ghana Revenue Authority (GRA) Tax Invoices.
+Carefully read and extract all details from this invoice image, including handwritten entries and printed text.
+
+Extract into a JSON object matching this exact schema:
 {
-  "vendor": "supplier or company name",
-  "invoiceNumber": "invoice number",
-  "date": "YYYY-MM-DD",
+  "vendor": "supplier name (e.g. from 'From:' field, shop header, or company stamp)",
+  "invoiceNumber": "invoice number / receipt number (e.g. from top right or 'No.')",
+  "date": "YYYY-MM-DD (convert dates like 06/08/26 to 2026-08-06)",
   "lineItems": [
-    { "description": "product name", "quantity": 0, "unitCost": 0, "total": 0 }
+    {
+      "description": "product or item description",
+      "quantity": 1,
+      "unitCost": 10000,
+      "total": 240000,
+      "batchNo": "batch or SKU if present, otherwise empty string"
+    }
   ],
-  "subtotal": 0,
+  "subtotal": 542400,
   "tax": 0,
-  "total": 0
+  "total": 542400
 }
-Return monetary values as integer Ghanaian pesewas (1 GHS = 100 pesewas). For a price of GH₵10.40, return 1040. If a value is missing, use 0 or an empty string.`;
+
+IMPORTANT INSTRUCTIONS:
+- Monetary values MUST be returned in integer Ghanaian pesewas (1 GHS = 100 pesewas). For example, GHS 100.00 -> 10000, GHS 12.00 -> 1200, GHS 74 -> 7400, GHS 5424 -> 542400.
+- For Ghana Revenue Authority tax invoices:
+  - "From:" specifies the supplier/vendor name.
+  - Look closely at handwritten rows for QTY, DESCRIPTION, UNIT PRICE, and AMOUNT.
+  - Convert any relative date to YYYY-MM-DD.
+- Return pure JSON only.`;
 
         const result = await model.generateContent([
           prompt,
           { inlineData: { data: rawBase64, mimeType } },
         ]);
 
-        const text = result.response
-          .text()
-          .trim()
-          .replace(/^```json/i, '')
-          .replace(/^```/i, '')
-          .replace(/```$/, '')
-          .trim();
+        let text = result.response.text().trim();
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          text = jsonMatch[0];
+        }
         const extractedData = JSON.parse(text);
 
-        console.log('[AI OCR] Gemini extraction succeeded');
+        console.log('[AI OCR] Gemini extraction succeeded:', extractedData);
         return {
           imageUrl,
           extractedData,
-          confidence: 0.9,
-          source: 'gemini-vision-1.5-flash',
+          confidence: 0.95,
+          source: 'gemini-2.5-flash',
           isMocked: false,
           requiresConfirmation: true,
         };
       } catch (err: any) {
-        console.warn('[AI OCR] Gemini extraction failed:', err?.message);
+        console.error('[AI OCR] Gemini extraction failed:', err?.message, err);
       }
     } else {
       console.warn('[AI OCR] No valid GEMINI_API_KEY or image payload — skipping Gemini');
@@ -514,7 +534,10 @@ Return monetary values as integer Ghanaian pesewas (1 GHS = 100 pesewas). For a 
     if (geminiKey && geminiKey.length > 5) {
       try {
         const genAI = new GoogleGenerativeAI(geminiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+        const model = genAI.getGenerativeModel({
+          model: 'gemini-2.5-flash',
+          generationConfig: { responseMimeType: 'application/json' },
+        });
 
         const prompt = `You are a retail counter assistant for a Ghanaian pharmacy & wellness shop.
 Give staff-facing guidance for this item so they can advise a walk-in customer.
