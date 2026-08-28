@@ -11,6 +11,7 @@ import {
   CreatePurchaseOrderSchema,
   ReceiveGoodsSchema,
   PayPurchaseOrderSchema,
+  ApprovePurchaseOrderSchema,
 } from './dto/suppliers.dto';
 import type {
   CreateSupplierDto,
@@ -18,6 +19,7 @@ import type {
   CreatePurchaseOrderDto,
   ReceiveGoodsDto,
   PayPurchaseOrderDto,
+  ApprovePurchaseOrderDto,
 } from './dto/suppliers.dto';
 
 @ApiTags('suppliers')
@@ -106,5 +108,27 @@ export class SuppliersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.suppliersService.payPurchaseOrder(id, dto, user.sub);
+  }
+
+  @Put('purchase-orders/:id/approve')
+  @Roles('manager', 'owner', 'supervisor')
+  @ApiOperation({ summary: 'Approve a purchase order' })
+  approvePurchaseOrder(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(ApprovePurchaseOrderSchema)) dto: ApprovePurchaseOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.suppliersService.approvePurchaseOrder(id, user.sub, dto.notes);
+  }
+
+  @Put('purchase-orders/:id/reject')
+  @Roles('manager', 'owner', 'supervisor')
+  @ApiOperation({ summary: 'Reject a purchase order' })
+  rejectPurchaseOrder(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(ApprovePurchaseOrderSchema)) dto: ApprovePurchaseOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.suppliersService.rejectPurchaseOrder(id, user.sub, dto.notes);
   }
 }

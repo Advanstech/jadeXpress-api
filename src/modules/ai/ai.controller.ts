@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AiService } from './ai.service';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
@@ -38,6 +38,27 @@ const PerfectImageSchema = z.object({
 @Controller('ai')
 export class AiController {
   constructor(private readonly aiService: AiService) {}
+
+  @Public()
+  @Get('product-insights/:id')
+  @ApiOperation({ summary: 'Storefront AI Product Insights via Gemini/OpenAI' })
+  productInsights(@Param('id') id: string) {
+    return this.aiService.getStorefrontProductInsights(id);
+  }
+
+  @Public()
+  @Post('explain-order')
+  @ApiOperation({ summary: 'Storefront AI Order Assistant' })
+  explainOrder(@Body() body: { orderNumber: string; email?: string }) {
+    return this.aiService.explainOrder(body.orderNumber, body.email);
+  }
+
+  @Public()
+  @Post('quiz-recommendations')
+  @ApiOperation({ summary: 'Storefront AI Health & Beauty Quiz' })
+  quizRecommendations(@Body() body: Record<string, any>) {
+    return this.aiService.recommendByQuiz(body);
+  }
 
   @Get('forecast')
   @ApiOperation({ summary: '[MOCKED] Demand forecast for a product' })

@@ -4,7 +4,7 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
-import { eq, and, ilike, or, lte, gte, sql, desc, asc } from 'drizzle-orm';
+import { eq, and, ilike, or, lte, gte, sql, desc, asc, inArray } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
@@ -24,6 +24,20 @@ import type {
   CreateCategoryDto,
 } from './dto/inventory.dto';
 
+const CATEGORY_SLUG_ALIASES: Record<string, string[]> = {
+  vitamins: ['vitamins-minerals', 'vitamins'],
+  supplements: ['supplements-wellness', 'supplements'],
+  cosmetics: ['beauty-skin', 'skincare-lotions', 'cosmetics'],
+  beauty: ['beauty-skin'],
+  skincare: ['skincare-lotions', 'beauty-skin'],
+  'children-health': ['childrens-health'],
+  omega: ['omega-fish-oils'],
+  protein: ['protein-sports'],
+  sports: ['protein-sports'],
+  digestive: ['digestive-health'],
+  immune: ['immune-support'],
+};
+
 @Injectable()
 export class InventoryService {
   constructor(
@@ -38,6 +52,17 @@ export class InventoryService {
 
   async getPublicCategories() {
     return this.db.select().from(categories).where(eq(categories.isActive, true)).orderBy(asc(categories.name));
+  }
+
+  async getPublicCategoryBySlug(slug: string) {
+    const targetSlugs = CATEGORY_SLUG_ALIASES[slug.toLowerCase()] ?? [slug];
+    const [cat] = await this.db
+      .select()
+      .from(categories)
+      .where(and(inArray(categories.slug, targetSlugs), eq(categories.isActive, true)))
+      .limit(1);
+    if (!cat) throw new NotFoundException('Category not found');
+    return cat;
   }
 
   async createCategory(dto: CreateCategoryDto) {
@@ -151,7 +176,10 @@ export class InventoryService {
     }
     if (type) conditions.push(eq(products.type, type as any));
     if (categoryId) conditions.push(eq(products.categoryId, categoryId));
-    if (categorySlug) conditions.push(eq(categories.slug, categorySlug));
+    if (categorySlug) {
+      const aliases = CATEGORY_SLUG_ALIASES[categorySlug.toLowerCase()] ?? [categorySlug];
+      conditions.push(inArray(categories.slug, aliases));
+    }
     if (brand) conditions.push(eq(products.brand, brand));
     if (typeof maxPrice === 'number') conditions.push(lte(products.sellingPricePesewas, maxPrice));
     if (featured) conditions.push(eq(products.isFeatured, true));
@@ -160,10 +188,16 @@ export class InventoryService {
     const whereClause = and(...conditions);
 
     let query$ = this.db
-      .select({ product: products, category: categories })
+      .select({
+        product: products,
+        category: categories,
+        stockTotal: sql<number>`COALESCE(SUM(${stockItems.quantityOnHand}), 0)::int`,
+      })
       .from(products)
       .leftJoin(categories, eq(products.categoryId, categories.id))
+      .leftJoin(stockItems, eq(stockItems.productId, products.id))
       .where(whereClause)
+      .groupBy(products.id, categories.id)
       .limit(limit)
       .offset(offset) as any;
 
@@ -199,8 +233,8 @@ export class InventoryService {
       categorySlug: row.category?.slug ?? null,
       categoryId: row.product.categoryId,
       categoryObj: row.category ?? null,
-      quantity: 0,
-      stockLevel: 0,
+      quantity: Number(row.stockTotal ?? 0),
+      stockLevel: Number(row.stockTotal ?? 0),
     }));
 
     return paginate(mappedData, Number(countResult[0]?.count ?? 0), page, limit);
@@ -230,10 +264,16 @@ export class InventoryService {
 
   async getPublicProductBySlug(slug: string) {
     const [row] = await this.db
-      .select({ product: products, category: categories })
+      .select({
+        product: products,
+        category: categories,
+        stockTotal: sql<number>`COALESCE(SUM(${stockItems.quantityOnHand}), 0)::int`,
+      })
       .from(products)
       .leftJoin(categories, eq(products.categoryId, categories.id))
+      .leftJoin(stockItems, eq(stockItems.productId, products.id))
       .where(eq(products.slug, slug))
+      .groupBy(products.id, categories.id)
       .limit(1);
     if (!row) throw new NotFoundException('Product not found');
     return {
@@ -241,6 +281,8 @@ export class InventoryService {
       category: row.category?.name ?? null,
       categoryName: row.category?.name ?? null,
       categorySlug: row.category?.slug ?? null,
+      quantity: Number(row.stockTotal ?? 0),
+      stockLevel: Number(row.stockTotal ?? 0),
     };
   }
 

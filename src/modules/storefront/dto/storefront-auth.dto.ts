@@ -19,9 +19,9 @@ export const RefreshTokenSchema = z.object({
 
 export const UpdateProfileSchema = z.object({
   firstName: z.string().min(1).max(100).optional(),
-  lastName: z.string().min(1).max(100).optional(),
-  phone: z.string().max(30).optional(),
-  avatarUrl: z.string().url().optional(),
+  lastName: z.string().min(1).max(100).optional().nullish().or(z.literal('')),
+  phone: z.string().max(30).optional().nullish().or(z.literal('')),
+  avatarUrl: z.string().url().optional().nullish().or(z.literal('')),
 });
 
 export const ChangePasswordSchema = z.object({

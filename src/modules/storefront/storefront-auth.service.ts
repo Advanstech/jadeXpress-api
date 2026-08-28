@@ -7,11 +7,11 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomUUID } from 'crypto';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
-import { customers, customerRefreshTokens } from '../../database/schema';
+import { customers, customerRefreshTokens, staffProfile } from '../../database/schema';
 import { JwtPayload } from '../../common/decorators/current-user.decorator';
 import type {
   RegisterDto,
@@ -103,10 +103,11 @@ export class StorefrontAuthService {
     return this.issueTokens(customer);
   }
 
-  async logout(refreshTokenString: string) {
-    const tokenHash = createHash('sha256').update(refreshTokenString).digest('hex');
+  async logout(token: string) {
+    const tokenHash = createHash('sha256').update(token).digest('hex');
     await this.db
-      .delete(customerRefreshTokens)
+      .update(customerRefreshTokens)
+      .set({ revokedAt: new Date() })
       .where(eq(customerRefreshTokens.tokenHash, tokenHash));
     return { success: true };
   }
@@ -118,7 +119,8 @@ export class StorefrontAuthService {
       .where(eq(customers.id, customerId))
       .limit(1);
     if (!customer) throw new NotFoundException('Customer not found');
-    return this.toPublicProfile(customer);
+    const { role } = await this.getEffectiveRoleAndStore(customer.email);
+    return this.toPublicProfile(customer, role);
   }
 
   async updateProfile(customerId: string, dto: UpdateProfileDto) {
@@ -128,7 +130,22 @@ export class StorefrontAuthService {
       .where(eq(customers.id, customerId))
       .returning();
     if (!customer) throw new NotFoundException('Customer not found');
-    return this.toPublicProfile(customer);
+
+    if (customer.email) {
+      const staffUpdates: any = { updatedAt: new Date() };
+      if (dto.firstName) staffUpdates.firstName = dto.firstName;
+      if (dto.lastName) staffUpdates.lastName = dto.lastName;
+      if (dto.phone !== undefined) staffUpdates.phone = dto.phone;
+      if (dto.avatarUrl !== undefined) staffUpdates.avatarUrl = dto.avatarUrl;
+
+      await this.db
+        .update(staffProfile)
+        .set(staffUpdates)
+        .where(eq(staffProfile.email, customer.email.toLowerCase()));
+    }
+
+    const { role } = await this.getEffectiveRoleAndStore(customer.email);
+    return this.toPublicProfile(customer, role);
   }
 
   async changePassword(customerId: string, dto: ChangePasswordDto) {
@@ -152,17 +169,35 @@ export class StorefrontAuthService {
     return { success: true };
   }
 
-  private toPublicProfile(customer: typeof customers.$inferSelect) {
+  private async getEffectiveRoleAndStore(email?: string | null) {
+    if (!email) return { role: 'customer', storeId: '' };
+    const [staff] = await this.db
+      .select({ role: staffProfile.role, storeId: staffProfile.storeId })
+      .from(staffProfile)
+      .where(and(eq(staffProfile.email, email.toLowerCase()), eq(staffProfile.isActive, true)))
+      .limit(1);
+    return {
+      role: (staff?.role ?? 'customer') as string,
+      storeId: staff?.storeId ?? '',
+    };
+  }
+
+  private toPublicProfile(customer: typeof customers.$inferSelect, role = 'customer') {
     const { passwordHash: _passwordHash, ...rest } = customer;
-    return rest;
+    return {
+      ...rest,
+      role,
+    };
   }
 
   private async issueTokens(customer: typeof customers.$inferSelect) {
+    const { role, storeId } = await this.getEffectiveRoleAndStore(customer.email);
+
     const payload: JwtPayload = {
       sub: customer.id,
-      role: 'customer',
-      storeId: '',
-      type: 'customer',
+      role,
+      storeId,
+      type: role === 'customer' ? 'customer' : 'staff',
     };
 
     const accessToken = this.jwtService.sign(payload);
@@ -185,7 +220,7 @@ export class StorefrontAuthService {
       accessToken,
       refreshToken: rawRefreshToken,
       expiresIn: this.config.getOrThrow<string>('jwt.expiresIn'),
-      customer: this.toPublicProfile(customer),
+      customer: this.toPublicProfile(customer, role),
     };
   }
 }

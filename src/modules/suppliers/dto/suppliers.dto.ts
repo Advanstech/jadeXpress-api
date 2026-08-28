@@ -59,3 +59,8 @@ export type UpdateSupplierDto = z.infer<typeof UpdateSupplierSchema>;
 export type CreatePurchaseOrderDto = z.infer<typeof CreatePurchaseOrderSchema>;
 export type ReceiveGoodsDto = z.infer<typeof ReceiveGoodsSchema>;
 export type PayPurchaseOrderDto = z.infer<typeof PayPurchaseOrderSchema>;
+
+export const ApprovePurchaseOrderSchema = z.object({
+  notes: z.string().optional(),
+});
+export type ApprovePurchaseOrderDto = z.infer<typeof ApprovePurchaseOrderSchema>;

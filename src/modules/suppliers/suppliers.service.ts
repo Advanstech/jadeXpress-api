@@ -365,4 +365,34 @@ export class SuppliersService {
       };
     });
   }
+
+  async approvePurchaseOrder(id: string, staffId: string, notes?: string) {
+    const [po] = await this.db
+      .update(purchaseOrders)
+      .set({
+        approvedById: staffId,
+        status: 'submitted', // Moving from draft to submitted
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseOrders.id, id))
+      .returning();
+
+    if (!po) throw new NotFoundException('Purchase order not found');
+    return po;
+  }
+
+  async rejectPurchaseOrder(id: string, staffId: string, notes?: string) {
+    const [po] = await this.db
+      .update(purchaseOrders)
+      .set({
+        approvedById: null,
+        status: 'cancelled', // Reverting or cancelling
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseOrders.id, id))
+      .returning();
+
+    if (!po) throw new NotFoundException('Purchase order not found');
+    return po;
+  }
 }

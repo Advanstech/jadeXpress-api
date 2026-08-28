@@ -127,6 +127,31 @@ export const storefrontOrderItems = pgTable('storefront_order_item', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// ─── Contact Messages / Storefront Inbox ───────────────────────────────────────
+export const contactMessages = pgTable(
+  'contact_message',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    name: varchar('name', { length: 150 }).notNull(),
+    email: varchar('email', { length: 255 }).notNull(),
+    phone: varchar('phone', { length: 50 }),
+    subject: varchar('subject', { length: 255 }).default('General Inquiry'),
+    message: text('message').notNull(),
+    status: varchar('status', { length: 30 }).notNull().default('unread'), // unread | read | in_progress | replied | archived
+    adminNotes: text('admin_notes'),
+    adminReply: text('admin_reply'),
+    repliedAt: timestamp('replied_at', { withTimezone: true }),
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('contact_msg_status_idx').on(t.status),
+    index('contact_msg_created_idx').on(t.createdAt),
+    index('contact_msg_email_idx').on(t.email),
+  ],
+);
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 export const customerAddressesRelations = relations(customerAddresses, ({ one }) => ({
   customer: one(customers, { fields: [customerAddresses.customerId], references: [customers.id] }),
@@ -145,4 +170,8 @@ export const storefrontOrdersRelations = relations(storefrontOrders, ({ one, man
 export const storefrontOrderItemsRelations = relations(storefrontOrderItems, ({ one }) => ({
   order: one(storefrontOrders, { fields: [storefrontOrderItems.orderId], references: [storefrontOrders.id] }),
   product: one(products, { fields: [storefrontOrderItems.productId], references: [products.id] }),
+}));
+
+export const contactMessagesRelations = relations(contactMessages, ({ one }) => ({
+  customer: one(customers, { fields: [contactMessages.customerId], references: [customers.id] }),
 }));

@@ -147,26 +147,118 @@ for (const staff of staffToSeed) {
 
 // ── 5. Default product categories ─────────────────────────────────────────
 const prodCats = [
-  { name: 'Vitamins & Minerals',  slug: 'vitamins-minerals' },
-  { name: 'Protein & Sports',     slug: 'protein-sports' },
-  { name: 'Herbal & Botanicals',  slug: 'herbal-botanicals' },
-  { name: 'Omega & Fish Oils',    slug: 'omega-fish-oils' },
-  { name: 'Beauty & Skin',        slug: 'beauty-skin' },
-  { name: 'Hair Care',            slug: 'hair-care' },
-  { name: 'Weight Management',    slug: 'weight-management' },
-  { name: 'Digestive Health',     slug: 'digestive-health' },
-  { name: 'Immune Support',       slug: 'immune-support' },
-  { name: 'Children\'s Health',   slug: 'childrens-health' },
+  {
+    name: 'Beauty & Skin',
+    slug: 'beauty-skin',
+    tagline: 'Clean, radiant botanical skincare & complexion essentials',
+    description: 'Revitalize your natural glow with dermatologist-approved serums, cleansers, and organic skincare formulas.',
+    imageUrl: '/categories/beauty-skin.jpg',
+    sortOrder: 1,
+  },
+  {
+    name: 'Children\'s Health',
+    slug: 'childrens-health',
+    tagline: 'Gentle daily multivitamins & wholesome nutrition for kids',
+    description: 'Delicious, pediatrician-approved gummy vitamins, immune boosters, and growth supplements designed specifically for children.',
+    imageUrl: '/categories/childrens-health.jpg',
+    sortOrder: 2,
+  },
+  {
+    name: 'Digestive Health',
+    slug: 'digestive-health',
+    tagline: 'Probiotics, soothing enzymes & daily gut balance',
+    description: 'Support balanced digestion, reduce bloating, and boost nutrient absorption with high-potency probiotics and herbal digestive blends.',
+    imageUrl: '/categories/digestive-health.jpg',
+    sortOrder: 3,
+  },
+  {
+    name: 'Hair Care',
+    slug: 'hair-care',
+    tagline: 'Nourishing oils, scalp care & restorative strengthening treatments',
+    description: 'Strengthen, hydrate, and protect hair with biotin-rich therapies, pure Moroccan argan oils, and revitalizing scalp serums.',
+    imageUrl: '/categories/hair-care.jpg',
+    sortOrder: 4,
+  },
+  {
+    name: 'Herbal & Botanicals',
+    slug: 'herbal-botanicals',
+    tagline: 'Traditional healing remedies, pure roots & herbal extracts',
+    description: 'Harness the timeless power of nature with sustainably sourced African botanicals, moringa, ashwagandha, and pure herbal extracts.',
+    imageUrl: '/categories/herbal-botanicals.jpg',
+    sortOrder: 5,
+  },
+  {
+    name: 'Immune Support',
+    slug: 'immune-support',
+    tagline: 'High-potency Vitamin C, Zinc, Elderberry & antioxidant defense',
+    description: 'Fortify your body\'s natural defenses year-round with clinical-strength antioxidants, echinacea, and essential immune complexes.',
+    imageUrl: '/categories/immune-support.jpg',
+    sortOrder: 6,
+  },
+  {
+    name: 'Omega & Fish Oils',
+    slug: 'omega-fish-oils',
+    tagline: 'Pure, purified EPA & DHA for heart, brain & joint health',
+    description: 'Molecularly distilled, burp-free omega-3 fish oils and wild Alaskan salmon oils for cardiovascular and cognitive vitality.',
+    imageUrl: '/categories/omega-fish-oils.jpg',
+    sortOrder: 7,
+  },
+  {
+    name: 'Protein & Sports',
+    slug: 'protein-sports',
+    tagline: 'Plant & whey proteins, BCAAs, electrolytes & active performance',
+    description: 'Fuel recovery, build lean muscle, and sustain peak endurance with clean protein isolates, creatine, and hydration electrolytes.',
+    imageUrl: '/categories/protein-sports.jpg',
+    sortOrder: 8,
+  },
+  {
+    name: 'Skincare & Lotions',
+    slug: 'skincare-lotions',
+    tagline: 'Rich Ghanaian shea butter, ceramide moisturizers & body creams',
+    description: 'Deeply hydrate and repair the skin barrier with authentic unrefined shea butter, lactic acid lotions, and dermatologist creams.',
+    imageUrl: '/categories/skincare-lotions.jpg',
+    sortOrder: 9,
+  },
+  {
+    name: 'Supplements & Wellness',
+    slug: 'supplements-wellness',
+    tagline: 'Collagen peptides, daily vitality stacks & longevity formulas',
+    description: 'Comprehensive daily health support featuring hydrolyzed collagen peptides, adaptogens, and holistic wellness essentials.',
+    imageUrl: '/categories/supplements-wellness.jpg',
+    sortOrder: 10,
+  },
+  {
+    name: 'Vitamins & Minerals',
+    slug: 'vitamins-minerals',
+    tagline: 'Essential daily micronutrients, Vitamin D3, Magnesium & Iron',
+    description: 'Fill nutritional gaps and sustain daily energy with complete multivitamins, chelated minerals, and high-absorption vitamins.',
+    imageUrl: '/categories/vitamins-minerals.jpg',
+    sortOrder: 11,
+  },
+  {
+    name: 'Weight Management',
+    slug: 'weight-management',
+    tagline: 'Natural metabolism support, green tea extracts & fiber blends',
+    description: 'Healthy, sustainable weight wellness with appetite-balancing fibers, thermogenic green tea extracts, and clean energy botanicals.',
+    imageUrl: '/categories/weight-management.jpg',
+    sortOrder: 12,
+  },
 ];
 
 for (const cat of prodCats) {
   await sql`
-    INSERT INTO category (name, slug, is_active, sort_order)
-    VALUES (${cat.name}, ${cat.slug}, true, 0)
-    ON CONFLICT (slug) DO NOTHING
+    INSERT INTO category (name, slug, is_active, sort_order, tagline, description, image_url)
+    VALUES (${cat.name}, ${cat.slug}, true, ${cat.sortOrder}, ${cat.tagline}, ${cat.description}, ${cat.imageUrl})
+    ON CONFLICT (slug) DO UPDATE SET
+      name = EXCLUDED.name,
+      tagline = EXCLUDED.tagline,
+      description = EXCLUDED.description,
+      image_url = EXCLUDED.image_url,
+      sort_order = EXCLUDED.sort_order,
+      is_active = true
   `;
 }
-console.log(`✓  ${prodCats.length} product categories seeded`);
+console.log(`✓  ${prodCats.length} product categories seeded & updated with rich image metadata`);
 
 // ── Summary ───────────────────────────────────────────────────────────────
 console.log(`

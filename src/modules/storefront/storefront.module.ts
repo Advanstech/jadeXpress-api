@@ -6,11 +6,23 @@ import { AddressesController } from './addresses.controller';
 import { AddressesService } from './addresses.service';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
+import { ContactController } from './contact.controller';
+import { ContactService } from './contact.service';
 
 @Module({
   imports: [AuthModule],
-  controllers: [StorefrontAuthController, AddressesController, OrdersController],
-  providers: [StorefrontAuthService, AddressesService, OrdersService],
-  exports: [OrdersService],
+  controllers: [
+    StorefrontAuthController,
+    AddressesController,
+    OrdersController,
+    ContactController,
+  ],
+  providers: [
+    StorefrontAuthService,
+    AddressesService,
+    OrdersService,
+    ContactService,
+  ],
+  exports: [OrdersService, ContactService],
 })
 export class StorefrontModule {}

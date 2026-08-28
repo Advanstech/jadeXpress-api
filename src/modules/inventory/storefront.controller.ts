@@ -1,6 +1,7 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { InventoryService } from './inventory.service';
+import { AiService } from '../ai/ai.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { PaginationSchema } from '../../common/dto/pagination.dto';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -20,13 +21,23 @@ const ProductQuerySchema = PaginationSchema.extend({
 @ApiTags('storefront')
 @Controller('storefront')
 export class StorefrontController {
-  constructor(private readonly inventoryService: InventoryService) {}
+  constructor(
+    private readonly inventoryService: InventoryService,
+    private readonly aiService: AiService,
+  ) {}
 
   @Public()
   @Get('categories')
   @ApiOperation({ summary: 'Public category list for the storefront' })
   getPublicCategories() {
     return this.inventoryService.getPublicCategories();
+  }
+
+  @Public()
+  @Get('categories/slug/:slug')
+  @ApiOperation({ summary: 'Public category details by slug with alias resolution' })
+  getPublicCategoryBySlug(@Param('slug') slug: string) {
+    return this.inventoryService.getPublicCategoryBySlug(slug);
   }
 
   @Public()
@@ -57,5 +68,26 @@ export class StorefrontController {
   @ApiOperation({ summary: 'Public product details for the storefront' })
   getPublicProductById(@Param('id') id: string) {
     return this.inventoryService.getPublicProductById(id);
+  }
+
+  @Public()
+  @Get('ai/product-insights/:id')
+  @ApiOperation({ summary: 'Public AI product insights via Gemini/OpenAI' })
+  getProductInsights(@Param('id') id: string) {
+    return this.aiService.getStorefrontProductInsights(id);
+  }
+
+  @Public()
+  @Post('ai/explain-order')
+  @ApiOperation({ summary: 'Public AI order assistant' })
+  explainOrder(@Body() body: { orderNumber: string; email?: string }) {
+    return this.aiService.explainOrder(body.orderNumber, body.email);
+  }
+
+  @Public()
+  @Post('ai/quiz-recommendations')
+  @ApiOperation({ summary: 'Public AI quiz recommendations' })
+  quizRecommendations(@Body() body: Record<string, any>) {
+    return this.aiService.recommendByQuiz(body);
   }
 }
