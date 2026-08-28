@@ -897,6 +897,206 @@ Respond strictly with a JSON object (no markdown, no backticks):
       })),
     };
   }
+
+  /**
+   * LIVE - AI Concierge Assistant via Gemini 1.5 Flash + Knowledge Engine
+   */
+  async chatConcierge(
+    message: string,
+    history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+  ): Promise<{ reply: string; source: string }> {
+    const activeProducts = await this.db
+      .select({
+        id: products.id,
+        name: products.name,
+        slug: products.slug,
+        brand: products.brand,
+        sellingPricePesewas: products.sellingPricePesewas,
+        dosageForm: products.dosageForm,
+        strength: products.strength,
+        shortDescription: products.shortDescription,
+        category: categories.name,
+        categorySlug: categories.slug,
+      })
+      .from(products)
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .where(eq(products.status, 'active'))
+      .limit(60);
+
+    const catalogSnippet = activeProducts
+      .slice(0, 35)
+      .map(
+        (p) =>
+          `- ${p.name} (${p.brand || 'JadeXpress'}, ${p.category || 'Health'}): GH₵${(p.sellingPricePesewas / 100).toFixed(2)}${p.strength ? ` | ${p.strength}` : ''}${p.dosageForm ? ` | ${p.dosageForm}` : ''} | Slug: ${p.slug || p.id}`,
+      )
+      .join('\n');
+
+    const systemPrompt = `You are the JadeXpress AI Concierge, the official, intelligent, warm, and highly knowledgeable digital pharmacist & beauty advisor for JadeXpress (Ghana's premier online pharmacy, wellness supplement, and dermatologist skincare destination).
+
+ABOUT JADEXPRESS:
+- Store Name: JadeXpress (The Vitamin Shop & Beauty Care)
+- Headquarters / Hub: Accra, Greater Accra Region, Ghana
+- Phone & WhatsApp: +233 20 404 7814
+- Email: jadexpress2019@gmail.com
+- Order Tracking: Customers can track live deliveries at /track-order by entering their Order Number (e.g. JX-...) and email address.
+- Delivery Times & Fees:
+  * Accra & Greater Accra: Express same-day delivery within 2–6 hours via dispatch riders.
+  * Regional Capitals (Kumasi, Takoradi, Cape Coast, Tamale, Sunyani, Koforidua, Ho, etc.): 24–48 hours delivery via express courier (Speedaf / VIP parcel / DHL).
+  * Free Delivery: Free shipping on all orders over GH₵500 across Ghana.
+  * International Shipping: Available worldwide via DHL Express.
+- Payment Options:
+  * Mobile Money (MTN MoMo, Telecel / Vodafone Cash, AT Money).
+  * Debit / Credit Cards (Visa, Mastercard via Paystack secure gateway).
+- Quality & Authenticity: 100% genuine batch-tested products directly from certified manufacturers in USA, UK, Europe, and Asia. Tamper-sealed packaging guaranteed.
+
+LIVE CATALOG HIGHLIGHTS:
+${catalogSnippet}
+
+HOW TO RESPOND:
+1. Always be polite, warm, and clear, tailored for shoppers in Ghana.
+2. Recommend 1 to 3 relevant products from the catalog whenever appropriate, mentioning why it helps, the price in GH₵, and a markdown link like [Product Name](/product/slug-here).
+3. If asked about delivery or order status, give exact timeframes, mention free delivery over GH₵500, and link to [Track Order](/track-order) or WhatsApp (+233 20 404 7814).
+4. Provide safe, helpful wellness advice (e.g. taking fat-soluble vitamins with meals, using SPF daily with vitamin C or retinol, drinking adequate water).
+5. Keep paragraphs concise and easy to read on mobile.`;
+
+    const geminiKey = this.config.get<string>('ai.geminiApiKey') || process.env.GEMINI_API_KEY;
+
+    // 1. Try Gemini
+    if (geminiKey && geminiKey.length > 5) {
+      try {
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({
+          model: 'gemini-1.5-flash',
+          systemInstruction: systemPrompt,
+        });
+
+        const historyContents = history.slice(-6).map((h) => ({
+          role: h.role === 'user' ? 'user' : 'model',
+          parts: [{ text: h.content }],
+        }));
+
+        const chat = model.startChat({
+          history: historyContents,
+        });
+
+        const result = await chat.sendMessage(message);
+        const reply = result.response.text();
+        if (reply && reply.trim().length > 0) {
+          return { reply: reply.trim(), source: 'gemini-1.5-flash' };
+        }
+      } catch (err: any) {
+        console.warn('[AI CONCIERGE GEMINI WARN] Fallback to OpenAI/Rule engine:', err?.message);
+      }
+    }
+
+    // 2. Try OpenAI
+    const openaiKey = this.config.get<string>('ai.openaiApiKey') || process.env.OPENAI_API_KEY;
+    if (openaiKey && openaiKey.length > 5) {
+      try {
+        const OpenAI = require('openai').default;
+        const openai = new OpenAI({ apiKey: openaiKey });
+        const messagesPayload = [
+          { role: 'system', content: systemPrompt },
+          ...history.slice(-6).map((h) => ({ role: h.role, content: h.content })),
+          { role: 'user', content: message },
+        ];
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: messagesPayload,
+          temperature: 0.7,
+        });
+        const reply = completion.choices[0]?.message?.content;
+        if (reply && reply.trim().length > 0) {
+          return { reply: reply.trim(), source: 'gpt-4o-mini' };
+        }
+      } catch (err: any) {
+        console.warn('[AI CONCIERGE OPENAI WARN] Fallback to local rule engine:', err?.message);
+      }
+    }
+
+    // 3. Fallback Knowledge Engine
+    return {
+      reply: this.generateConciergeFallback(message, activeProducts),
+      source: 'knowledge-engine',
+    };
+  }
+
+  private generateConciergeFallback(message: string, allProducts: any[]): string {
+    const q = message.toLowerCase();
+
+    // Delivery / shipping queries
+    if (q.includes('deliver') || q.includes('accra') || q.includes('how long') || q.includes('shipping') || q.includes('kumasi') || q.includes('speedaf')) {
+      return `📦 **JadeXpress Delivery Timelines:**
+
+• **Accra & Greater Accra:** Same-day express delivery within **2–6 hours** via our dedicated dispatch team.
+• **Other Regions (Kumasi, Takoradi, Cape Coast, Tamale, etc.):** Delivered within **24–48 hours** via Speedaf / VIP courier.
+• **Free Delivery:** All orders over **GH₵500** qualify for free delivery across Ghana!
+• **Worldwide:** International express shipping available via DHL.
+
+You can track an existing package on our [Track Order](/track-order) page or WhatsApp us at **+233 20 404 7814** for urgent deliveries.`;
+    }
+
+    // Dry skin queries
+    if (q.includes('dry skin') || q.includes('moistur') || q.includes('hydra') || q.includes('ceramide') || q.includes('shea')) {
+      return `✨ **Top Recommendations for Dry & Sensitive Skin:**
+
+To repair your skin barrier and lock in all-day moisture in the Ghanaian climate:
+
+1. **[Simple Protecting Light Moisturiser SPF](/product/simple-protecting-light-moisturiser-spf-125-ml)** (GH₵120.00) — Infused with Pro-Vitamin B5, Vitamin E, and SPF protection for lightweight, non-comedogenic hydration.
+2. **Ceramide Barrier Creams & Ghana Unrefined Shea Butter** — Deeply soothes flakiness and restores essential fatty acids.
+
+💡 **Pro Tip:** Apply your moisturiser onto slightly damp skin immediately after showering to seal in maximum hydration. Always follow with sunscreen in the daytime!`;
+    }
+
+    // Vitamin C vs Hydra cream
+    if ((q.includes('vitamin c') || q.includes('serum')) && (q.includes('compare') || q.includes('cream') || q.includes('hydra'))) {
+      return `🔬 **Comparison: Vitamin C Serum vs. Hydrating Moisturiser**
+
+• **Vitamin C Serum (Active Antioxidant):**
+  - **Purpose:** Fades dark spots & hyperpigmentation, brightens skin tone, and boosts collagen synthesis.
+  - **When to use:** Apply in the **morning** on clean, dry skin before your moisturiser.
+
+• **Hydrating Cream / Moisturiser (Barrier Protection):**
+  - **Purpose:** Prevents trans-epidermal water loss, strengthens the skin barrier, and keeps skin plump.
+  - **When to use:** Apply **after** your serum morning and evening.
+
+✨ **Best Routine:** Use your Vitamin C serum first, wait 1 minute, layer your moisturiser, and finish with SPF!`;
+    }
+
+    // Vitamin routine for energy
+    if (q.includes('energy') || q.includes('routine') || q.includes('fatigue') || q.includes('tired') || q.includes('multivitamin')) {
+      return `⚡ **Recommended Daily Energy & Vitality Routine:**
+
+1. **Morning (With Breakfast):**
+   • **[MaryRuth's Liquid Morning Multivitamin](/product/maryruths-liquid-morning-multivitamin-raspberry-32-fl-oz-946-ml)** (GH₵500.00) or **[Vitabiotics Perfectil MAX](/product/vitabiotics-perfectil-max-maximum-support-84-dual-pack)** (GH₵460.00) — Packed with essential B-Complex vitamins (B12, Folate), Vitamin C, and Zinc to fuel cellular energy.
+   • **[NOW Foods High Potency Vitamin D3 10,000 IU](/product/now-foods-high-potency-vitamin-d3-10000-iu-120-softgels)** (GH₵220.00) — Critical for immunity, mood balance, and bone density.
+
+2. **Evening (Before Bed):**
+   • **[Nobi Nutrition Maximum Absorption Magnesium Glycinate](/product/nobi-nutrition-maximum-absorption-magnesium-glycinate-500-mg-60-capsules)** (GH₵350.00) — Calms the nervous system, prevents muscle cramps, and promotes deep restorative sleep.
+
+All products are 100% authentic and sealed. Free delivery over GH₵500!`;
+    }
+
+    // Order tracking & payments
+    if (q.includes('track') || q.includes('order') || q.includes('momo') || q.includes('payment') || q.includes('paystack')) {
+      return `📱 **Orders & Payments Information:**
+
+• **Track Your Order:** Visit our [Track Order](/track-order) page and enter your order number (e.g. \`JX-...\`) along with your email address.
+• **Accepted Payments:** We accept all Ghanaian Mobile Money networks (MTN MoMo, Telecel Cash, AT Money) and Cards (Visa/Mastercard) via Paystack secure checkout.
+• **Customer Support:** WhatsApp or call us at **+233 20 404 7814** (Mon–Sat, 8am–7pm).`;
+    }
+
+    // Default friendly wellness response with product suggestions
+    return `👋 Hello! I'm your **JadeXpress AI Concierge**. I can help you with:
+
+• 💊 **Vitamins & Supplements:** High-potency Vitamin D3, Magnesium Glycinate, Liquid Multivitamins, Collagen Peptides.
+• ✨ **Dermatologist Skincare:** Hydrating lotions, SPF sunscreens, Vitamin C serums, and acne solutions.
+• 🚚 **Delivery in Ghana:** Express 2–6 hr delivery in Accra, next-day delivery nationwide, and free delivery over GH₵500.
+• 📦 **Order Assistance:** Live tracking and product comparisons.
+
+How can I assist your health and beauty journey today?`;
+  }
 }
+
 
 

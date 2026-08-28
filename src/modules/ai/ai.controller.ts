@@ -33,11 +33,36 @@ const PerfectImageSchema = z.object({
   style: z.enum(['studio_white', 'studio_ambient', 'transparent_png']).optional(),
 });
 
+const ConciergeChatSchema = z.object({
+  message: z.string().min(1).max(2000),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string(),
+      }),
+    )
+    .optional(),
+});
+
 @ApiTags('ai')
 @ApiBearerAuth()
 @Controller('ai')
 export class AiController {
   constructor(private readonly aiService: AiService) {}
+
+  @Public()
+  @Post('concierge')
+  @ApiOperation({ summary: 'Storefront AI Concierge Chatbot powered by Gemini' })
+  conciergeChat(
+    @Body(new ZodValidationPipe(ConciergeChatSchema))
+    body: {
+      message: string;
+      history?: { role: 'user' | 'assistant'; content: string }[];
+    },
+  ) {
+    return this.aiService.chatConcierge(body.message, body.history || []);
+  }
 
   @Public()
   @Get('product-insights/:id')
