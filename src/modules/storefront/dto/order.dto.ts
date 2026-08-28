@@ -43,5 +43,12 @@ export const UpdateOrderStatusSchema = z.object({
   note: z.string().optional(),
 });
 
+export const MarkPaidSchema = z.object({
+  reference: z.string().min(1),
+  gateway: z.string().min(1),
+  method: z.string().optional(),
+});
+
 export type CreateOrderDto = z.infer<typeof CreateOrderSchema>;
 export type UpdateOrderStatusDto = z.infer<typeof UpdateOrderStatusSchema>;
+export type MarkPaidDto = z.infer<typeof MarkPaidSchema>;

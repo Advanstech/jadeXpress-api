@@ -13,4 +13,8 @@ export class InitializePaystackDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;
+
+  @IsOptional()
+  @IsString()
+  callbackUrl?: string;
 }

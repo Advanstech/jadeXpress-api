@@ -38,7 +38,9 @@ export class PaymentsService {
           amount: dto.amount,
           currency: dto.currency,
           metadata: dto.metadata,
-          callback_url: this.config.get<string>('payments.paystackCallbackUrl'),
+          callback_url:
+            dto.callbackUrl ??
+            this.config.get<string>('payments.paystackCallbackUrl'),
         }),
       });
 

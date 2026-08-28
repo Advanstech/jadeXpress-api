@@ -10,6 +10,7 @@ import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.de
 import {
   CreateOrderSchema, CreateOrderDto,
   UpdateOrderStatusSchema, UpdateOrderStatusDto,
+  MarkPaidSchema, MarkPaidDto,
 } from './dto/order.dto';
 
 @ApiTags('storefront-orders')
@@ -80,6 +81,16 @@ export class OrdersController {
     @Body(new ZodValidationPipe(UpdateOrderStatusSchema)) dto: UpdateOrderStatusDto,
   ) {
     return this.ordersService.updateStatus(id, dto);
+  }
+
+  @Public()
+  @Put(':id/pay')
+  @ApiOperation({ summary: 'Record payment against an order (public, for gateway callbacks)' })
+  markPaid(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(MarkPaidSchema)) dto: MarkPaidDto,
+  ) {
+    return this.ordersService.markPaid(id, dto.reference, dto.gateway, dto.method);
   }
 
   // Best-effort verification of an optional customer bearer token on the
