@@ -214,8 +214,19 @@ export class SuppliersService {
     if (!po) throw new NotFoundException('Purchase order not found');
 
     const items = await this.db
-      .select()
+      .select({
+        id: purchaseItems.id,
+        productId: purchaseItems.productId,
+        quantityOrdered: purchaseItems.quantityOrdered,
+        quantityReceived: purchaseItems.quantityReceived,
+        unitCostPesewas: purchaseItems.unitCostPesewas,
+        totalCostPesewas: purchaseItems.totalCostPesewas,
+        batchNumber: purchaseItems.batchNumber,
+        sku: products.sku,
+        name: products.name,
+      })
       .from(purchaseItems)
+      .leftJoin(products, eq(purchaseItems.productId, products.id))
       .where(eq(purchaseItems.purchaseOrderId, id));
 
     return { ...po, items };
