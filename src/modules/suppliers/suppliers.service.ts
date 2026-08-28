@@ -383,7 +383,7 @@ export class SuppliersService {
       .update(purchaseOrders)
       .set({
         approvedById: staffId,
-        status: 'submitted', // Moving from draft to submitted
+        status: 'invoiced', // Approved and ready for payment
         updatedAt: new Date(),
       })
       .where(eq(purchaseOrders.id, id))
