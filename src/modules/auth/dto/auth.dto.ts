@@ -9,10 +9,14 @@ export const LoginSchema = z.object({
 
 // PIN login — POS touchscreen cashier login
 export const PinLoginSchema = z.object({
-  staffId: z.string().uuid(),
   pin: z.string().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
-  storeId: z.string().uuid(),
-});
+  staffId: z.string().uuid().optional(),
+  storeId: z.string().uuid().optional(),
+  email: z.string().email().optional(),
+}).refine(
+  (data) => (data.staffId && data.storeId) || data.email,
+  { message: 'Provide either staffId + storeId or email', path: ['email'] },
+);
 
 // Manager PIN verification — for overrides/refunds/discounts without full re-login
 export const PinVerifySchema = z.object({

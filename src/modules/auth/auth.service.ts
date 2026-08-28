@@ -47,16 +47,26 @@ export class AuthService {
 
   // ── PIN login (POS cashier login — fastest path) ──────────────────────────
   async pinLogin(dto: PinLoginDto) {
-    const [staff] = await this.db
-      .select()
-      .from(staffProfile)
-      .where(
-        and(
-          eq(staffProfile.id, dto.staffId),
-          eq(staffProfile.storeId, dto.storeId),
-        ),
-      )
-      .limit(1);
+    let staff: typeof staffProfile.$inferSelect | undefined;
+
+    if (dto.staffId && dto.storeId) {
+      [staff] = await this.db
+        .select()
+        .from(staffProfile)
+        .where(
+          and(
+            eq(staffProfile.id, dto.staffId),
+            eq(staffProfile.storeId, dto.storeId),
+          ),
+        )
+        .limit(1);
+    } else if (dto.email) {
+      [staff] = await this.db
+        .select()
+        .from(staffProfile)
+        .where(eq(staffProfile.email, dto.email.toLowerCase()))
+        .limit(1);
+    }
 
     if (!staff) throw new NotFoundException('Staff not found');
     if (!staff.isActive) throw new UnauthorizedException('Account is deactivated');
