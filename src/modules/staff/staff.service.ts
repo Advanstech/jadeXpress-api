@@ -70,7 +70,6 @@ export class StaffService {
         and(
           eq(staffProfile.storeId, targetStoreId),
           eq(staffProfile.isActive, true),
-          sql`${staffProfile.role} <> 'customer'`,
         ),
       )
       .orderBy(staffProfile.firstName);
