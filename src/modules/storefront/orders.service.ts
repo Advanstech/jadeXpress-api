@@ -7,10 +7,14 @@ import {
   products,
 } from '../../database/schema';
 import type { CreateOrderDto, UpdateOrderStatusDto } from './dto/order.dto';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class OrdersService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly email: EmailService,
+  ) {}
 
   private generateOrderNumber() {
     const now = new Date();
@@ -53,6 +57,18 @@ export class OrdersService {
         image: item.image,
       })),
     );
+
+    this.email
+      .sendOrderConfirmation({
+        to: order.email,
+        orderNumber: order.orderNumber,
+        items: dto.items.map((i) => ({ name: i.name, quantity: i.quantity, pricePesewas: i.price })),
+        subtotalPesewas,
+        shippingFeePesewas: dto.shippingFeePesewas,
+        totalPesewas,
+        shippingAddress: dto.shippingAddress as any,
+      })
+      .catch((err) => console.error('Failed to send order confirmation email', err));
 
     return this.getOrderById(order.id);
   }

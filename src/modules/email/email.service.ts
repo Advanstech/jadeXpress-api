@@ -12,10 +12,14 @@ export class EmailService {
   private resend: Resend | null = null;
   private readonly logger = new Logger(EmailService.name);
   private isDevelopment = true;
+  private readonly fromEmail: string;
 
   constructor(private config: ConfigService) {
     const apiKey = this.config.get<string>('RESEND_API_KEY');
     this.isDevelopment = this.config.get<string>('NODE_ENV') !== 'production';
+    this.fromEmail =
+      this.config.get<string>('RESEND_FROM_EMAIL') ??
+      (this.isDevelopment ? 'onboarding@resend.dev' : 'noreply@jadexpress.com');
 
     if (apiKey) {
       this.resend = new Resend(apiKey);
@@ -104,11 +108,40 @@ export class EmailService {
     });
   }
 
+  async sendOrderConfirmation(data: {
+    to: string;
+    orderNumber: string;
+    items: Array<{ name: string; quantity: number; pricePesewas: number }>;
+    subtotalPesewas: number;
+    shippingFeePesewas: number;
+    totalPesewas: number;
+    shippingAddress: { recipientName?: string; city?: string; region?: string; country?: string; street?: string };
+  }) {
+    const format = (p: number) => `₵${(p / 100).toFixed(2)}`;
+    const itemsHtml = data.items
+      .map((i) => `<tr><td>${i.name}</td><td>${i.quantity}</td><td>${format(i.pricePesewas)}</td></tr>`)
+      .join('');
+    const html = `
+      <h1>JadeXpress Order Confirmation</h1>
+      <p>Hi ${data.shippingAddress.recipientName ?? 'Customer'},</p>
+      <p>Thank you for your order <strong>#${data.orderNumber}</strong>.</p>
+      <table border="1" cellpadding="8" style="border-collapse:collapse;">
+        <tr><th>Item</th><th>Qty</th><th>Price</th></tr>
+        ${itemsHtml}
+      </table>
+      <p>Subtotal: ${format(data.subtotalPesewas)}</p>
+      <p>Shipping: ${format(data.shippingFeePesewas)}</p>
+      <p><strong>Total: ${format(data.totalPesewas)}</strong></p>
+      <p>Delivering to:<br/>${data.shippingAddress.street ?? ''}<br/>${data.shippingAddress.city ?? ''}, ${data.shippingAddress.region ?? ''}<br/>${data.shippingAddress.country ?? ''}</p>
+    `;
+    return this.sendEmail({ to: data.to, subject: `JadeXpress Order ${data.orderNumber} Confirmed`, html });
+  }
+
   private async sendEmail(params: { to: string; subject: string; html: string }) {
     if (this.resend) {
       try {
         const result = await this.resend.emails.send({
-          from: 'JadeXpress <noreply@jadexpress.com>', // MUST BE verified domain in Resend
+          from: `JadeXpress <${this.fromEmail}>`, // MUST BE verified domain in Resend
           to: params.to,
           subject: params.subject,
           html: params.html,

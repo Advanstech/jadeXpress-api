@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { EmailModule } from '../email/email.module';
 import { StorefrontAuthController } from './storefront-auth.controller';
 import { StorefrontAuthService } from './storefront-auth.service';
 import { AddressesController } from './addresses.controller';
@@ -10,7 +11,7 @@ import { ContactController } from './contact.controller';
 import { ContactService } from './contact.service';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, EmailModule],
   controllers: [
     StorefrontAuthController,
     AddressesController,
