@@ -227,7 +227,13 @@ export class StaffService {
 
     await this.db
       .update(staffProfile)
-      .set({ pinHash, updatedAt: new Date() })
+      .set({
+        pinHash,
+        failedPinAttempts: 0,
+        pinLockedUntil: null,
+        requiresPinChange: false,
+        updatedAt: new Date(),
+      })
       .where(eq(staffProfile.id, id));
 
     return { success: true, temporaryPin: rawPin };

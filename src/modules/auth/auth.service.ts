@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   NotFoundException,
   Inject,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -19,6 +20,7 @@ import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly jwtService: JwtService,
@@ -244,6 +246,13 @@ export class AuthService {
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const codeHash = await bcrypt.hash(otpCode, 12);
+
+    // Log OTP to server console in development for debugging
+    this.logger.log(`-------------------------------------------------------`);
+    this.logger.log(`🔐 OTP GENERATED — type: ${type.toUpperCase()}`);
+    this.logger.log(`   Staff: ${staff.firstName} ${staff.lastName} <${staff.email}>`);
+    this.logger.log(`   OTP Code: ${otpCode} (expires in 15 minutes)`);
+    this.logger.log(`-------------------------------------------------------`);
 
     // Expire in 15 mins
     const expiresAt = new Date();

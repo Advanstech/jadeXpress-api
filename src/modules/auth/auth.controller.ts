@@ -1,5 +1,6 @@
-import { Controller, Post, Put, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Put, Body, HttpCode, HttpStatus, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { z } from 'zod';
 import { AuthService } from './auth.service';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { Public } from '../../common/decorators/public.decorator';
@@ -16,9 +17,16 @@ import {
   ResetCredentialSchema, ResetCredentialDto,
 } from './dto/auth-recovery.dto';
 
+const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(6),
+  newPassword: z.string().min(8, 'New password must be at least 8 characters'),
+});
+type ChangePasswordDto = z.infer<typeof ChangePasswordSchema>;
+
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
   constructor(private readonly authService: AuthService) {}
 
   @Public()
@@ -71,35 +79,58 @@ export class AuthController {
     return this.authService.changePin(user.sub, user.storeId, dto);
   }
 
+  @Put('change-password')
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Change user password (requires current password)' })
+  changePassword(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(ChangePasswordSchema)) dto: ChangePasswordDto,
+  ) {
+    return this.authService.changePassword(user.sub, user.storeId, dto);
+  }
+
   @Public()
   @Post('forgot-pin')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Request OTP to reset PIN' })
-  forgotPin(@Body(new ZodValidationPipe(ForgotCredentialSchema)) dto: ForgotCredentialDto) {
-    return this.authService.forgotCredential(dto.email, 'pin');
+  async forgotPin(@Body(new ZodValidationPipe(ForgotCredentialSchema)) dto: ForgotCredentialDto) {
+    this.logger.log(`[forgot-pin] Request for email: ${dto.email}`);
+    const result = await this.authService.forgotCredential(dto.email, 'pin');
+    this.logger.log(`[forgot-pin] OTP dispatched for: ${dto.email}`);
+    return result;
   }
 
   @Public()
   @Post('reset-pin')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reset PIN with OTP' })
-  resetPin(@Body(new ZodValidationPipe(ResetCredentialSchema)) dto: ResetCredentialDto) {
-    return this.authService.resetCredential(dto.email, dto.otpCode, dto.newSecret, 'pin');
+  async resetPin(@Body(new ZodValidationPipe(ResetCredentialSchema)) dto: ResetCredentialDto) {
+    this.logger.log(`[reset-pin] Attempt for email: ${dto.email}`);
+    const result = await this.authService.resetCredential(dto.email, dto.otpCode, dto.newSecret, 'pin');
+    this.logger.log(`[reset-pin] Success for email: ${dto.email}`);
+    return result;
   }
 
   @Public()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Request OTP to reset Password' })
-  forgotPassword(@Body(new ZodValidationPipe(ForgotCredentialSchema)) dto: ForgotCredentialDto) {
-    return this.authService.forgotCredential(dto.email, 'password');
+  async forgotPassword(@Body(new ZodValidationPipe(ForgotCredentialSchema)) dto: ForgotCredentialDto) {
+    this.logger.log(`[forgot-password] Request for email: ${dto.email}`);
+    const result = await this.authService.forgotCredential(dto.email, 'password');
+    this.logger.log(`[forgot-password] OTP dispatched for: ${dto.email}`);
+    return result;
   }
 
   @Public()
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reset Password with OTP' })
-  resetPassword(@Body(new ZodValidationPipe(ResetCredentialSchema)) dto: ResetCredentialDto) {
-    return this.authService.resetCredential(dto.email, dto.otpCode, dto.newSecret, 'password');
+  async resetPassword(@Body(new ZodValidationPipe(ResetCredentialSchema)) dto: ResetCredentialDto) {
+    this.logger.log(`[reset-password] Attempt for email: ${dto.email}`);
+    const result = await this.authService.resetCredential(dto.email, dto.otpCode, dto.newSecret, 'password');
+    this.logger.log(`[reset-password] Success for email: ${dto.email}`);
+    return result;
   }
 }
