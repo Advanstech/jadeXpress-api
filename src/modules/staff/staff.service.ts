@@ -63,7 +63,17 @@ export class StaffService {
     
     if (!targetStoreId) return [];
 
-    return this.db.select(safeSelect).from(staffProfile).where(eq(staffProfile.storeId, targetStoreId)).orderBy(staffProfile.firstName);
+    return this.db
+      .select(safeSelect)
+      .from(staffProfile)
+      .where(
+        and(
+          eq(staffProfile.storeId, targetStoreId),
+          eq(staffProfile.isActive, true),
+          sql`${staffProfile.role} <> 'customer'`,
+        ),
+      )
+      .orderBy(staffProfile.firstName);
   }
 
   async getById(id: string) {
