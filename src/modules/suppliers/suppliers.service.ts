@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq, and, desc, sql, ilike, inArray, sum } from 'drizzle-orm';
+import { eq, and, or, desc, sql, ilike, inArray, sum } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
   suppliers,
@@ -83,7 +83,7 @@ export class SuppliersService {
   }
 
   async getSupplierProducts(supplierId: string, storeId?: string) {
-    // Collect product IDs both from POs and from products where this supplier is primary
+    // Collect product IDs from POs and stock batches for this supplier
     const supplierPOs = await this.db
       .select({ id: purchaseOrders.id })
       .from(purchaseOrders)
@@ -91,17 +91,13 @@ export class SuppliersService {
 
     const poIds = supplierPOs.map((po) => po.id);
 
-    const [poProductRows, directProducts, batchProductRows] = await Promise.all([
+    const [poProductRows, batchProductRows] = await Promise.all([
       poIds.length > 0
         ? this.db
             .selectDistinct({ productId: purchaseItems.productId })
             .from(purchaseItems)
             .where(inArray(purchaseItems.purchaseOrderId, poIds))
         : [],
-      this.db
-        .select({ id: products.id })
-        .from(products)
-        .where(eq(products.primarySupplierId, supplierId)),
       this.db
         .selectDistinct({ productId: stockBatches.productId })
         .from(stockBatches)
@@ -110,18 +106,21 @@ export class SuppliersService {
 
     const ids = new Set<string>();
     for (const row of poProductRows) {
-      ids.add(row.productId);
-    }
-    for (const row of directProducts) {
-      ids.add(row.id);
+      if (row.productId) ids.add(row.productId);
     }
     for (const row of batchProductRows) {
-      ids.add(row.productId);
+      if (row.productId) ids.add(row.productId);
     }
 
-    if (ids.size === 0) return { data: [], total: 0 };
-
     const productIds = Array.from(ids);
+
+    const whereClause =
+      productIds.length > 0
+        ? or(
+            eq(products.primarySupplierId, supplierId),
+            inArray(products.id, productIds),
+          )
+        : eq(products.primarySupplierId, supplierId);
 
     const rows = await this.db
       .select({
@@ -137,7 +136,8 @@ export class SuppliersService {
           ? and(eq(stockItems.productId, products.id), eq(stockItems.storeId, storeId))
           : eq(stockItems.productId, products.id),
       )
-      .where(inArray(products.id, productIds));
+      .where(whereClause)
+      .orderBy(desc(products.createdAt));
 
     const mappedData = rows.map((row) => ({
       ...row.product,
