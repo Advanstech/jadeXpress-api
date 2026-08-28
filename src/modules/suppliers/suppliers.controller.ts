@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { SuppliersService } from './suppliers.service';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -66,6 +66,13 @@ export class SuppliersController {
   @Roles('manager', 'owner')
   update(@Param('id') id: string, @Body(new ZodValidationPipe(UpdateSupplierSchema)) dto: UpdateSupplierDto) {
     return this.suppliersService.update(id, dto);
+  }
+
+  @Delete(':id')
+  @Roles('manager', 'owner')
+  @ApiOperation({ summary: 'Delete / deactivate supplier' })
+  delete(@Param('id') id: string) {
+    return this.suppliersService.delete(id);
   }
 
   @Get('purchase-orders/store')

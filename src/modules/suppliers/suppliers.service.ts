@@ -27,7 +27,9 @@ export class SuppliersService {
   async list(query: PaginationDto) {
     const { page, limit, search } = query;
     const offset = (page - 1) * limit;
-    const where = search ? ilike(suppliers.name, `%${search}%`) : undefined;
+    const where = search
+      ? and(ilike(suppliers.name, `%${search}%`), eq(suppliers.isActive, true))
+      : eq(suppliers.isActive, true);
 
     const [data, [{ count }]] = await Promise.all([
       this.db.select().from(suppliers).where(where).orderBy(suppliers.name).limit(limit).offset(offset),
@@ -40,6 +42,16 @@ export class SuppliersService {
     const [supplier] = await this.db.select().from(suppliers).where(eq(suppliers.id, id)).limit(1);
     if (!supplier) throw new NotFoundException('Supplier not found');
     return supplier;
+  }
+
+  async delete(id: string) {
+    const [supplier] = await this.db
+      .update(suppliers)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(suppliers.id, id))
+      .returning();
+    if (!supplier) throw new NotFoundException('Supplier not found');
+    return { success: true };
   }
 
   async create(dto: CreateSupplierDto) {
