@@ -17,8 +17,9 @@ export class EmailService {
   constructor(private config: ConfigService) {
     const apiKey = this.config.get<string>('RESEND_API_KEY');
     this.isDevelopment = this.config.get<string>('NODE_ENV') !== 'production';
+    const from = this.config.get<string>('RESEND_FROM_EMAIL');
     this.fromEmail =
-      this.config.get<string>('RESEND_FROM_EMAIL') ??
+      (from && from.trim()) ||
       (this.isDevelopment ? 'onboarding@resend.dev' : 'noreply@jadexpress.com');
 
     if (apiKey) {
