@@ -4,6 +4,7 @@ dist/
 .env*
 *.env
 *.env.local
+.env.example
 *.js.map
 coverage/
 .DS_Store
