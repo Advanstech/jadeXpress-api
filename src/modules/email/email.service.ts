@@ -147,6 +147,11 @@ export class EmailService {
           subject: params.subject,
           html: params.html,
         });
+        
+        if (result.error) {
+          throw result.error;
+        }
+        
         this.logger.log(`Email sent to ${params.to}. Resend ID: ${result.data?.id}`);
         return result;
       } catch (error) {
