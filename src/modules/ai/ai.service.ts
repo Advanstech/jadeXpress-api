@@ -649,7 +649,7 @@ ${profile.sections.map((s) => `  - id "${s.id}", label "${s.label}" — ${s.prom
 
       const allMatches: any[] = [];
 
-      await Promise.all(chunks.map(async (chunk) => {
+      for (const chunk of chunks) {
         const prompt = `You are a retail inventory matching system.
 Map these extracted item names from a supplier invoice to the closest matching product in our catalog.
 Use the catalog's name and description to find the most accurate match. Be lenient with abbreviations, punctuation, and typos (e.g. "Vitamin C 500mg tab" -> "Vit C 500 mg Tablet").
@@ -683,12 +683,17 @@ Respond with JSON ONLY in this exact shape:
         if (parsed.matches && Array.isArray(parsed.matches)) {
           allMatches.push(...parsed.matches);
         }
-      }));
+
+        // Add 4-second delay between chunks to strictly avoid Gemini Free Tier 15 RPM limits
+        if (chunks.length > 1) {
+          await new Promise(resolve => setTimeout(resolve, 4000));
+        }
+      }
 
       return { matches: allMatches };
     } catch (err: any) {
-      console.error('[AI MATCH ERROR]', err?.message);
-      throw new Error('Product matching failed');
+      console.error('[AI MATCH ERROR]', err);
+      throw new Error(`Product matching failed: ${err?.message || err}`);
     }
   }
 
