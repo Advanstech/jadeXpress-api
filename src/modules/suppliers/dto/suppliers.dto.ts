@@ -32,6 +32,9 @@ export const CreatePurchaseOrderSchema = z.object({
   items: z.array(PurchaseOrderItemSchema).min(1),
   notes: z.string().optional(),
   approvedById: z.string().uuid().optional(),
+  invoiceNumber: z.string().optional(),
+  invoiceDate: z.string().date().optional(),
+  invoiceTotalGhs: z.number().optional(),
 });
 
 export const ReceiveGoodsSchema = z.object({

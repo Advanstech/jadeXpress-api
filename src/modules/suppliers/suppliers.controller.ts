@@ -47,6 +47,15 @@ export class SuppliersController {
     return this.suppliersService.getSupplierPOs(id, query);
   }
 
+  @Get(':id/invoices')
+  @ApiOperation({ summary: 'List all uploaded supplier invoices' })
+  getSupplierInvoices(
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(PaginationSchema)) query: any,
+  ) {
+    return this.suppliersService.getSupplierInvoices(id, query);
+  }
+
   @Get(':id/products')
   @ApiOperation({ summary: 'List all products ever sourced from a supplier' })
   getSupplierProducts(

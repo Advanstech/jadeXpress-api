@@ -55,6 +55,17 @@ export class SuppliersService {
   }
 
   async create(dto: CreateSupplierDto) {
+    // Deduplicate by name (case-insensitive)
+    const [existing] = await this.db
+      .select()
+      .from(suppliers)
+      .where(ilike(suppliers.name, dto.name))
+      .limit(1);
+
+    if (existing) {
+      return existing;
+    }
+
     const [supplier] = await this.db.insert(suppliers).values(dto).returning();
     return supplier;
   }
@@ -78,6 +89,19 @@ export class SuppliersService {
       this.db.select().from(purchaseOrders).where(where)
         .orderBy(desc(purchaseOrders.orderDate)).limit(limit).offset(offset),
       this.db.select({ count: sql<number>`count(*)` }).from(purchaseOrders).where(where),
+    ]);
+    return paginate(data, Number(count), page, limit);
+  }
+
+  async getSupplierInvoices(supplierId: string, query: PaginationDto) {
+    const { page, limit } = query;
+    const offset = (page - 1) * limit;
+    const where = eq(supplierInvoices.supplierId, supplierId);
+
+    const [data, [{ count }]] = await Promise.all([
+      this.db.select().from(supplierInvoices).where(where)
+        .orderBy(desc(supplierInvoices.createdAt)).limit(limit).offset(offset),
+      this.db.select({ count: sql<number>`count(*)` }).from(supplierInvoices).where(where),
     ]);
     return paginate(data, Number(count), page, limit);
   }
@@ -187,6 +211,19 @@ export class SuppliersService {
           expiryDate: item.expiryDate,
         })),
       ).returning();
+
+      if (dto.invoiceNumber) {
+        await tx.insert(supplierInvoices).values({
+          invoiceNumber: dto.invoiceNumber,
+          supplierId: dto.supplierId,
+          purchaseOrderId: po.id,
+          issuedDate: dto.invoiceDate || new Date().toISOString().split('T')[0],
+          totalAmountPesewas: dto.invoiceTotalGhs ? Math.round(dto.invoiceTotalGhs * 100) : subtotal,
+          balancePesewas: dto.invoiceTotalGhs ? Math.round(dto.invoiceTotalGhs * 100) : subtotal,
+          ocrExtracted: true,
+          ocrConfirmed: true,
+        });
+      }
 
       return { ...po, items: insertedItems };
     });
