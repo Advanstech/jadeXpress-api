@@ -650,10 +650,15 @@ ${profile.sections.map((s) => `  - id "${s.id}", label "${s.label}" — ${s.prom
       const allMatches: any[] = [];
 
       for (const chunk of chunks) {
-        const prompt = `You are a retail inventory matching system.
-Map these extracted item names from a supplier invoice to the closest matching product in our catalog.
-Use the catalog's name and description to find the most accurate match. Be lenient with abbreviations, punctuation, and typos (e.g. "Vitamin C 500mg tab" -> "Vit C 500 mg Tablet").
-If there is no logical match, return null for that item's matchedProductId.
+        const prompt = `You are a retail inventory matching system with highly aggressive fuzzy-matching capabilities.
+Your job is to map extracted item names from a supplier invoice to the closest matching product in our catalog.
+
+CRITICAL MATCHING RULES (THROW THE NET WIDE):
+1. Ignore minor differences in formatting, abbreviations, casing, or punctuation (e.g., "Vit" == "Vitamin", "100'S" == "100s", "CAP" == "Capsule", "PWD" == "Powder").
+2. Focus on the core brand, product name, and dosage/size. If the core identity matches, link them.
+3. If an extracted item is missing a brand name but the catalog has it (or vice versa), STILL MATCH THEM if the core product and specs align.
+4. Be highly aggressive in matching. If you are reasonably sure they are the same product in reality, link them. Do not return null unless you are absolutely certain there is no match in the catalog.
+5. A "medium" or "low" confidence match is ALWAYS better than returning null, as long as it's a plausible match.
 
 EXTRACTED ITEMS:
 ${JSON.stringify(chunk, null, 2)}
