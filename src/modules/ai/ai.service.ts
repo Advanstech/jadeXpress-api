@@ -718,7 +718,39 @@ Respond with JSON ONLY in this exact shape:
     const prompt = `Professional product photography of ${productName}${categoryHint}${descHint}. Studio lighting, clean white background, sharp focus, high resolution, commercial product shot style. Show the actual product packaging or bottle clearly. Do not include random background elements.`;
 
     if (useFallback) {
-      console.log('[AI IMAGE GEN] Using fallback image due to missing/invalid API key');
+      console.log('[AI IMAGE GEN] Using fallback image search due to missing/invalid API key');
+      
+      const cleanName = productName.replace(/[^a-zA-Z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      const words = cleanName.split(' ');
+      
+      const searchAttempts = [
+        productName,
+        cleanName,
+        words.slice(0, 3).join(' '),
+        words.slice(0, 2).join(' '),
+        category || 'product'
+      ];
+
+      for (const attempt of searchAttempts) {
+        if (!attempt || attempt.trim().length === 0) continue;
+        try {
+          const query = encodeURIComponent(attempt.trim());
+          const url = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${query}&gsrlimit=1&prop=pageimages&pithumbsize=1024&format=json`;
+          const res = await fetch(url);
+          const data = await res.json();
+          const pages = data?.query?.pages;
+          if (pages) {
+            const firstPageId = Object.keys(pages)[0];
+            const imgUrl = pages[firstPageId]?.thumbnail?.source;
+            if (imgUrl) {
+               return { imageUrl: imgUrl, model: 'wikipedia-search' };
+            }
+          }
+        } catch (e) {
+          // ignore and try next
+        }
+      }
+      
       return { imageUrl: 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?q=80&w=1024&auto=format&fit=crop', model: 'mock-dalle' };
     }
 
