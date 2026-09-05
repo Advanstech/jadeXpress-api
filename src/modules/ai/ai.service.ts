@@ -628,7 +628,7 @@ ${profile.sections.map((s) => `  - id "${s.id}", label "${s.label}" — ${s.prom
    * LIVE - Product Matching via Gemini 2.5 Flash
    * Takes extracted OCR names and maps them to catalog IDs
    */
-  async matchProducts(extractedItems: string[], catalog: { id: string; name: string; sku?: string | null }[]) {
+  async matchProducts(extractedItems: string[], catalog: { id: string; name: string; sku?: string | null; description?: string | null }[]) {
     const geminiKey = this.config.get<string>('ai.geminiApiKey') || process.env.GEMINI_API_KEY;
     if (!geminiKey) {
       throw new Error('GEMINI_API_KEY not configured');
@@ -641,14 +641,24 @@ ${profile.sections.map((s) => `  - id "${s.id}", label "${s.label}" — ${s.prom
         generationConfig: { responseMimeType: 'application/json' },
       });
 
-      const prompt = `You are a retail inventory matching system.
+      const chunkSize = 15;
+      const chunks = [];
+      for (let i = 0; i < extractedItems.length; i += chunkSize) {
+        chunks.push(extractedItems.slice(i, i + chunkSize));
+      }
+
+      const allMatches: any[] = [];
+
+      await Promise.all(chunks.map(async (chunk) => {
+        const prompt = `You are a retail inventory matching system.
 Map these extracted item names from a supplier invoice to the closest matching product in our catalog.
+Use the catalog's name and description to find the most accurate match. Be lenient with abbreviations, punctuation, and typos (e.g. "Vitamin C 500mg tab" -> "Vit C 500 mg Tablet").
 If there is no logical match, return null for that item's matchedProductId.
 
 EXTRACTED ITEMS:
-${JSON.stringify(extractedItems, null, 2)}
+${JSON.stringify(chunk, null, 2)}
 
-CATALOG (ID, NAME, SKU):
+CATALOG (ID, NAME, SKU, DESCRIPTION):
 ${JSON.stringify(catalog, null, 2)}
 
 Respond with JSON ONLY in this exact shape:
@@ -662,13 +672,20 @@ Respond with JSON ONLY in this exact shape:
   ]
 }`;
 
-      const result = await model.generateContent(prompt);
-      let text = result.response.text().trim();
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        text = jsonMatch[0];
-      }
-      return JSON.parse(text);
+        const result = await model.generateContent(prompt);
+        let text = result.response.text().trim();
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          text = jsonMatch[0];
+        }
+        
+        const parsed = JSON.parse(text);
+        if (parsed.matches && Array.isArray(parsed.matches)) {
+          allMatches.push(...parsed.matches);
+        }
+      }));
+
+      return { matches: allMatches };
     } catch (err: any) {
       console.error('[AI MATCH ERROR]', err?.message);
       throw new Error('Product matching failed');

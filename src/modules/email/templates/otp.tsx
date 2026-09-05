@@ -44,9 +44,18 @@ export const OtpEmail: React.FC<OtpEmailProps> = ({
                 Use the security code below to complete the process.
               </Text>
 
-              <Section className="bg-gray-50 border border-gray-200 rounded p-6 mb-6 inline-block">
-                <Text className="text-4xl font-mono font-bold tracking-[0.3em] text-[#121212] m-0">
+              <Section className="bg-gray-50 border border-gray-200 rounded-2xl p-8 mb-6 mx-auto text-center" style={{ maxWidth: '400px', width: '100%' }}>
+                <Text className="text-xs font-bold text-gray-400 uppercase tracking-widest m-0 mb-3">
+                  Your Security Code
+                </Text>
+                <Text 
+                  className="text-4xl sm:text-5xl font-mono font-black text-[#121212] m-0" 
+                  style={{ letterSpacing: '0.3em', paddingLeft: '0.3em' }}
+                >
                   {otpCode}
+                </Text>
+                <Text className="text-[11px] text-gray-400 mt-4 m-0 font-medium">
+                  (Double-click or tap & hold to copy)
                 </Text>
               </Section>
 
