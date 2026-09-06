@@ -8,12 +8,14 @@ import {
 } from '../../database/schema';
 import type { CreateOrderDto, UpdateOrderStatusDto } from './dto/order.dto';
 import { EmailService } from '../email/email.service';
+import { PaymentsService } from '../payments/payments.service';
 
 @Injectable()
 export class OrdersService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly email: EmailService,
+    private readonly payments: PaymentsService,
   ) {}
 
   private generateOrderNumber() {
@@ -24,7 +26,31 @@ export class OrdersService {
   }
 
   async createOrder(customerId: string | null, dto: CreateOrderDto) {
-    const subtotalPesewas = dto.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    // SECURITY: resolve prices & names server-side from the products table —
+    // client-sent prices are never trusted (prevents price tampering at checkout).
+    const resolvedItems = [];
+    for (const item of dto.items) {
+      if (item.productId) {
+        const [product] = await this.db
+          .select({
+            name: products.name,
+            sellingPricePesewas: products.sellingPricePesewas,
+            status: products.status,
+          })
+          .from(products)
+          .where(eq(products.id, item.productId))
+          .limit(1);
+        if (!product || product.status !== 'active') {
+          throw new BadRequestException(`${item.name} is no longer available`);
+        }
+        resolvedItems.push({ ...item, name: product.name, price: product.sellingPricePesewas });
+      } else {
+        // Custom line item with no catalog reference — keep client data
+        resolvedItems.push(item);
+      }
+    }
+
+    const subtotalPesewas = resolvedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
     const totalPesewas = subtotalPesewas + dto.shippingFeePesewas;
 
     const orderNumber = this.generateOrderNumber();
@@ -48,7 +74,7 @@ export class OrdersService {
       .returning();
 
     await this.db.insert(storefrontOrderItems).values(
-      dto.items.map((item) => ({
+      resolvedItems.map((item) => ({
         orderId: order.id,
         productId: item.productId,
         name: item.name,
@@ -62,7 +88,7 @@ export class OrdersService {
       .sendOrderConfirmation({
         to: order.email,
         orderNumber: order.orderNumber,
-        items: dto.items.map((i) => ({ name: i.name, quantity: i.quantity, pricePesewas: i.price })),
+        items: resolvedItems.map((i) => ({ name: i.name, quantity: i.quantity, pricePesewas: i.price })),
         subtotalPesewas,
         shippingFeePesewas: dto.shippingFeePesewas,
         totalPesewas,
@@ -81,6 +107,26 @@ export class OrdersService {
       .where(eq(storefrontOrders.id, orderId))
       .limit(1);
     if (!order) throw new NotFoundException('Order not found');
+
+    // Idempotent — replaying a successful webhook/callback is a no-op
+    if (order.paymentStatus === 'paid') return order;
+
+    // SECURITY: only Paystack payments can be auto-confirmed, and only after
+    // the gateway itself verifies the reference. Anything else (e.g. MoMo)
+    // requires staff confirmation — a client saying "paid" is never enough.
+    if (gateway !== 'paystack' || !reference) {
+      throw new BadRequestException(
+        'This payment method requires manual confirmation by our team',
+      );
+    }
+
+    const verification = await this.payments.verifyPaystack(reference);
+    if (verification.status !== 'success') {
+      throw new BadRequestException('Payment has not been completed');
+    }
+    if (verification.amount < order.totalPesewas) {
+      throw new BadRequestException('Payment amount does not match the order total');
+    }
 
     const timeline = [
       ...(order.timeline ?? []),
