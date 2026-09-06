@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
   ConflictException,
 } from '@nestjs/common';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, gte, lte, ilike, or } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { staffProfile, shiftReconciliation } from '../../database/schema';
@@ -287,11 +287,31 @@ export class StaffService {
     return combined;
   }
 
-  async getAllAuditLogs(storeId: string, query: PaginationDto) {
-    const { auditLogs } = await import('../../database/schema');
-    const { page, limit } = query;
+  async getAllAuditLogs(storeId: string, query: PaginationDto & { from?: string; to?: string; action?: string }) {
+    const { auditLogs, staffProfile } = await import('../../database/schema');
+    const { page, limit, from, to, action, search } = query;
     const offset = (page - 1) * limit;
-    const where = eq(auditLogs.storeId, storeId);
+
+    const conditions = [eq(auditLogs.storeId, storeId)];
+    if (from) conditions.push(gte(auditLogs.createdAt, new Date(from)));
+    if (to) {
+      const endOfDay = new Date(to);
+      endOfDay.setHours(23, 59, 59, 999);
+      conditions.push(lte(auditLogs.createdAt, endOfDay));
+    }
+    if (action && action !== 'all') conditions.push(eq(auditLogs.action, action));
+    if (search) {
+      conditions.push(
+        or(
+          ilike(auditLogs.action, `%${search}%`),
+          ilike(auditLogs.entityType, `%${search}%`),
+          ilike(staffProfile.firstName, `%${search}%`),
+          ilike(staffProfile.lastName, `%${search}%`),
+        )!,
+      );
+    }
+
+    const where = and(...conditions);
 
     const [data, [{ count }]] = await Promise.all([
       this.db.query.auditLogs.findMany({
@@ -301,7 +321,10 @@ export class StaffService {
         limit,
         offset,
       }),
-      this.db.select({ count: sql<number>`count(*)` }).from(auditLogs).where(where),
+      this.db.select({ count: sql<number>`count(*)` })
+        .from(auditLogs)
+        .leftJoin(staffProfile, eq(staffProfile.id, auditLogs.staffId))
+        .where(where),
     ]);
 
     // sanitize staff inside logs to not leak passwordHash

@@ -6,6 +6,9 @@ export const PaginationSchema = z.object({
   search: z.string().optional(),
   sortBy: z.string().optional(),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  action: z.string().optional(),
 });
 
 export type PaginationDto = z.infer<typeof PaginationSchema>;
