@@ -15,6 +15,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   validate(payload: JwtPayload): JwtPayload {
+    // Token audience separation — storefront customer tokens must never
+    // authorize POS/staff endpoints (they only pass on explicit customer routes).
+    if (payload.type === 'customer') {
+      throw new UnauthorizedException('Invalid token audience');
+    }
     if (!payload.sub || !payload.role) {
       throw new UnauthorizedException('Invalid token payload');
     }

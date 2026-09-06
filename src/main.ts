@@ -8,13 +8,24 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import fastifyHelmet from '@fastify/helmet';
 import fastifyCompress from '@fastify/compress';
 import fastifyRateLimit from '@fastify/rate-limit';
+import { sql } from 'drizzle-orm';
 import { AppModule } from './app.module';
+import { DRIZZLE } from './database/database.module';
 
 async function bootstrap() {
   try {
     const app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
-      new FastifyAdapter({ logger: false, bodyLimit: 10 * 1024 * 1024 }),
+      new FastifyAdapter({
+        logger: false,
+        bodyLimit: 10 * 1024 * 1024,
+        // Behind Render/nginx — trust X-Forwarded-* so rate limiting sees real client IPs
+        trustProxy: true,
+        // Hard request timeout — no request may hang forever
+        requestTimeout: 30_000,
+        // Stay just above typical LB idle timeout (60s) to avoid premature resets
+        keepAliveTimeout: 61_000,
+      }),
     );
 
     const config = app.get(ConfigService);
@@ -33,7 +44,12 @@ async function bootstrap() {
 
     // ── Rate limiting ──────────────────────────────────────────────────────
     await app.register(fastifyRateLimit, {
-      max: (req) => (req.url?.startsWith(`/${apiPrefix}/auth/`) ? 20 : 300),
+      max: (req) =>
+        // Stricter buckets for auth (brute force) and AI (paid upstream calls)
+        req.url?.startsWith(`/${apiPrefix}/auth/`) ||
+        req.url?.startsWith(`/${apiPrefix}/ai/`)
+          ? 20
+          : 300,
       timeWindow: '1 minute',
       allowList: ['127.0.0.1'],
     });
@@ -54,6 +70,10 @@ async function bootstrap() {
     app.setGlobalPrefix(apiPrefix, {
       exclude: ['/health', '/'],
     });
+
+    // ── Graceful shutdown ─────────────────────────────────────────────────
+    // SIGTERM/SIGINT now run lifecycle hooks (DatabaseModule closes its pool)
+    app.enableShutdownHooks();
 
     // ── OpenAPI / Swagger ──────────────────────────────────────────────────
     const enableSwagger =
@@ -88,7 +108,9 @@ async function bootstrap() {
       });
     }
 
-    // ── Health check ───────────────────────────────────────────────────────
+    // ── Health checks ──────────────────────────────────────────────────────
+    // /health        → liveness (no dependencies — for LB uptime pings)
+    // /health/ready  → readiness (verifies DB connectivity — for deploy gates)
     const fastifyInstance = app.getHttpAdapter().getInstance();
     fastifyInstance.get('/health', async () => ({
       status: 'ok',
@@ -97,11 +119,46 @@ async function bootstrap() {
       version: '1.0.0',
     }));
 
+    const db = app.get(DRIZZLE);
+    fastifyInstance.get('/health/ready', async (_req: unknown, reply: unknown) => {
+      try {
+        await db.execute(sql`select 1`);
+        return { status: 'ok', db: 'up', timestamp: new Date().toISOString() };
+      } catch {
+        (reply as { code: (n: number) => void }).code(503);
+        return { status: 'error', db: 'down', timestamp: new Date().toISOString() };
+      }
+    });
+
     await app.listen(port, '0.0.0.0');
     console.log(`🌿 JadeXpress API running on port ${port} [${nodeEnv}]`);
     if (enableSwagger) {
       console.log(`📖 Swagger docs: http://localhost:${port}/docs`);
     }
+
+    // ── Process-level resilience ───────────────────────────────────────────
+    // Log stray promise rejections but keep serving (a single rejection
+    // should never take the whole POS backend down).
+    process.on('unhandledRejection', (reason) => {
+      console.error('❌ Unhandled promise rejection:', reason);
+    });
+    // An uncaught exception leaves the process in an undefined state —
+    // log and exit so the platform restarts a clean instance.
+    process.on('uncaughtException', (err) => {
+      console.error('❌ Uncaught exception — exiting for clean restart:', err);
+      process.exit(1);
+    });
+    // Safety net: if graceful shutdown (via enableShutdownHooks) ever hangs,
+    // force-exit after 10s so deploys don't wedge.
+    const forceExitTimer = (signal: string) => {
+      console.log(`👋 ${signal} received — shutting down gracefully`);
+      setTimeout(() => {
+        console.error('⚠️ Graceful shutdown exceeded 10s — forcing exit');
+        process.exit(0);
+      }, 10_000).unref();
+    };
+    process.on('SIGTERM', () => forceExitTimer('SIGTERM'));
+    process.on('SIGINT', () => forceExitTimer('SIGINT'));
   } catch (err) {
     console.error('❌ Failed to bootstrap application:', err);
     process.exit(1);

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtService } from '@nestjs/jwt';
 import { FastifyRequest } from 'fastify';
@@ -6,6 +6,7 @@ import { OrdersService } from './orders.service';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { CustomerAuthGuard } from './guards/customer-token.guard';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import {
   CreateOrderSchema, CreateOrderDto,
@@ -41,6 +42,8 @@ export class OrdersController {
     return this.ordersService.trackOrder(orderNumber, email);
   }
 
+  @Public()
+  @UseGuards(CustomerAuthGuard)
   @Get('mine')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List the current customer\'s orders' })
@@ -48,6 +51,8 @@ export class OrdersController {
     return this.ordersService.listByCustomer(user.sub);
   }
 
+  @Public()
+  @UseGuards(CustomerAuthGuard)
   @Get('mine/:id')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get one of the current customer\'s orders' })

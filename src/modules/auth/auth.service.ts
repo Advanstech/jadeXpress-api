@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull, lt } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomUUID } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
@@ -122,9 +122,33 @@ export class AuthService {
       .where(eq(refreshTokens.tokenHash, tokenHash))
       .limit(1);
 
-    if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+    if (!stored) throw new UnauthorizedException('Invalid or expired refresh token');
+
+    // Reuse of an already-rotated token — likely theft; revoke ALL sessions
+    if (stored.revokedAt) {
+      await this.db
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(
+          and(
+            eq(refreshTokens.staffId, stored.staffId),
+            isNull(refreshTokens.revokedAt),
+          ),
+        );
+      this.logger.warn(
+        `Refresh token reuse detected for staff ${stored.staffId} — all sessions revoked`,
+      );
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
+
+    if (stored.expiresAt < new Date()) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    // Opportunistic cleanup — purge expired tokens so the table stays small
+    await this.db
+      .delete(refreshTokens)
+      .where(lt(refreshTokens.expiresAt, new Date()));
 
     const [staff] = await this.db
       .select()
@@ -247,12 +271,14 @@ export class AuthService {
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const codeHash = await bcrypt.hash(otpCode, 12);
 
-    // Log OTP to server console in development for debugging
-    this.logger.log(`-------------------------------------------------------`);
-    this.logger.log(`🔐 OTP GENERATED — type: ${type.toUpperCase()}`);
-    this.logger.log(`   Staff: ${staff.firstName} ${staff.lastName} <${staff.email}>`);
-    this.logger.log(`   OTP Code: ${otpCode} (expires in 15 minutes)`);
-    this.logger.log(`-------------------------------------------------------`);
+    // Log OTP to server console in development only — never leak codes in prod logs
+    if (this.config.get('app.nodeEnv') !== 'production') {
+      this.logger.log(`-------------------------------------------------------`);
+      this.logger.log(`🔐 OTP GENERATED — type: ${type.toUpperCase()}`);
+      this.logger.log(`   Staff: ${staff.firstName} ${staff.lastName} <${staff.email}>`);
+      this.logger.log(`   OTP Code: ${otpCode} (expires in 15 minutes)`);
+      this.logger.log(`-------------------------------------------------------`);
+    }
 
     // Expire in 15 mins
     const expiresAt = new Date();

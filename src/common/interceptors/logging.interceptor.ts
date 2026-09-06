@@ -19,9 +19,19 @@ export class LoggingInterceptor implements NestInterceptor {
     const start = Date.now();
 
     return next.handle().pipe(
-      tap(() => {
-        const ms = Date.now() - start;
-        this.logger.log(`${method} ${url} — ${ms}ms`);
+      tap({
+        next: () => {
+          const ms = Date.now() - start;
+          if (ms > 1000) {
+            this.logger.warn(`SLOW ${method} ${url} — ${ms}ms`);
+          } else {
+            this.logger.log(`${method} ${url} — ${ms}ms`);
+          }
+        },
+        error: () => {
+          const ms = Date.now() - start;
+          this.logger.warn(`${method} ${url} — failed after ${ms}ms`);
+        },
       }),
     );
   }

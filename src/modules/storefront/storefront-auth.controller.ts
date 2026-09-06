@@ -1,9 +1,10 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Put } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { StorefrontAuthService } from './storefront-auth.service';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
+import { CustomerAuthGuard } from './guards/customer-token.guard';
 import {
   RegisterSchema, RegisterDto,
   LoginSchema, LoginDto,
@@ -49,6 +50,8 @@ export class StorefrontAuthController {
     return this.authService.logout(dto.refreshToken);
   }
 
+  @Public()
+  @UseGuards(CustomerAuthGuard)
   @Get('me')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get the current customer profile' })
@@ -56,6 +59,8 @@ export class StorefrontAuthController {
     return this.authService.getProfile(user.sub);
   }
 
+  @Public()
+  @UseGuards(CustomerAuthGuard)
   @Put('me')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update the current customer profile' })
@@ -66,6 +71,8 @@ export class StorefrontAuthController {
     return this.authService.updateProfile(user.sub, dto);
   }
 
+  @Public()
+  @UseGuards(CustomerAuthGuard)
   @Put('me/password')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Change the current customer password' })

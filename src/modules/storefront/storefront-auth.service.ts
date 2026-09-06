@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomUUID } from 'crypto';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
@@ -81,7 +81,23 @@ export class StorefrontAuthService {
       .where(eq(customerRefreshTokens.tokenHash, tokenHash))
       .limit(1);
 
-    if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+    if (!stored) throw new UnauthorizedException('Invalid or expired refresh token');
+
+    // Reuse of an already-rotated token — likely theft; revoke ALL sessions
+    if (stored.revokedAt) {
+      await this.db
+        .update(customerRefreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(
+          and(
+            eq(customerRefreshTokens.customerId, stored.customerId),
+            isNull(customerRefreshTokens.revokedAt),
+          ),
+        );
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    if (stored.expiresAt < new Date()) {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 

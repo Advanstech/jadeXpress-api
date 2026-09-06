@@ -132,7 +132,6 @@ export class AiController {
     return this.aiService.askTheShop(body.question, user.storeId);
   }
 
-  @Public()
   @Post('ocr')
   @ApiOperation({ summary: 'OCR extraction from supplier invoice/receipt image' })
   ocr(@Body(new ZodValidationPipe(OcrSchema)) body: { imageUrl?: string; base64Image?: string }) {
@@ -140,7 +139,7 @@ export class AiController {
   }
 
   @Post('extract-product')
-  @ApiOperation({ summary: 'Vision AI product extraction from uploaded product packaging or label photo' })
+  @ApiOperation({ summary: 'Vision AI product extraction from uploaded product packaging or label photos' })
   async extractProduct(
     @Body(new ZodValidationPipe(ExtractProductSchema))
     body: { imageUrl?: string; base64Image?: string; fileName?: string },
