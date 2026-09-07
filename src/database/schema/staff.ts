@@ -45,6 +45,32 @@ export const staffProfile = pgTable(
       .default({}),
     // For pharmacist role (Phase 2 Rx)
     licenseNumber: varchar('license_number', { length: 100 }),
+
+    // ── Payroll & Financial (Ghana compliance) ──────────────────────────────
+    // SSNIT — Social Security and National Insurance Trust
+    ssnitNumber: varchar('ssnit_number', { length: 50 }),
+    // GRA Tax Identification Number
+    tinNumber: varchar('tin_number', { length: 50 }),
+    // Bank account details
+    bankName: varchar('bank_name', { length: 100 }),
+    bankAccountName: varchar('bank_account_name', { length: 150 }),
+    bankAccountNumber: varchar('bank_account_number', { length: 50 }),
+    bankBranch: varchar('bank_branch', { length: 100 }),
+    // Mobile money
+    mobileMoneyProvider: varchar('mobile_money_provider', { length: 50 }), // MTN, Telecel, AirtelTigo
+    mobileMoneyNumber: varchar('mobile_money_number', { length: 30 }),
+    // Default basic salary in pesewas (for payroll auto-fill)
+    basicSalaryPesewas: integer('basic_salary_pesewas'),
+    // Employment details
+    employmentType: varchar('employment_type', { length: 20 }), // full_time, part_time, contract, casual
+    employmentDate: timestamp('employment_date', { withTimezone: true }),
+    // Next of kin
+    nextOfKinName: varchar('next_of_kin_name', { length: 150 }),
+    nextOfKinPhone: varchar('next_of_kin_phone', { length: 30 }),
+    nextOfKinRelationship: varchar('next_of_kin_relationship', { length: 50 }),
+    // Whether to use in-app payroll or manual/banking system outside
+    payrollEnabled: boolean('payroll_enabled').notNull().default(false),
+
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },

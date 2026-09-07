@@ -12,6 +12,22 @@ export const CreateStaffSchema = z.object({
   avatarUrl: z.string().url().optional(),
   idDocumentUrl: z.string().url().optional(),
   licenseNumber: z.string().optional(),
+  // Payroll & financial
+  ssnitNumber: z.string().max(50).optional(),
+  tinNumber: z.string().max(50).optional(),
+  bankName: z.string().max(100).optional(),
+  bankAccountName: z.string().max(150).optional(),
+  bankAccountNumber: z.string().max(50).optional(),
+  bankBranch: z.string().max(100).optional(),
+  mobileMoneyProvider: z.enum(['MTN','Telecel','AirtelTigo']).optional(),
+  mobileMoneyNumber: z.string().max(30).optional(),
+  basicSalaryPesewas: z.number().int().min(0).optional(),
+  employmentType: z.enum(['full_time','part_time','contract','casual']).optional(),
+  employmentDate: z.coerce.date().optional(),
+  nextOfKinName: z.string().max(150).optional(),
+  nextOfKinPhone: z.string().max(30).optional(),
+  nextOfKinRelationship: z.string().max(50).optional(),
+  payrollEnabled: z.boolean().optional(),
 });
 
 export const UpdateStaffSchema = CreateStaffSchema.omit({ pin: true, password: true }).partial();

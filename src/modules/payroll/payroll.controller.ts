@@ -17,13 +17,18 @@ export class PayrollController {
   }
 
   @Get('cycles/:id')
-  getCycleById(@Param('id') id: string) {
-    return this.payrollService.getCycleById(id);
+  getCycleById(@Param('id') id: string, @Query('storeId') storeId?: string) {
+    return this.payrollService.getCycleById(id, storeId);
   }
 
   @Post('cycles/:id/finalize')
-  finalizeCycle(@Param('id') id: string) {
-    return this.payrollService.finalizeCycle(id);
+  finalizeCycle(@Param('id') id: string, @Body() body?: { processedById?: string }) {
+    return this.payrollService.finalizeCycle(id, body?.processedById);
+  }
+
+  @Post('cycles/:id/pay')
+  markCyclePaid(@Param('id') id: string, @Body() body?: { processedById?: string }) {
+    return this.payrollService.markCyclePaid(id, body?.processedById);
   }
 
   @Post('payslips')
@@ -39,5 +44,13 @@ export class PayrollController {
   @Delete('payslips/:id')
   deletePayslip(@Param('id') id: string) {
     return this.payrollService.deletePayslip(id);
+  }
+
+  @Post('payslips/:id/pay')
+  markPayslipPaid(
+    @Param('id') id: string,
+    @Body() body?: { paymentMethod?: string; paymentReference?: string; notes?: string },
+  ) {
+    return this.payrollService.markPayslipPaid(id, body ?? {});
   }
 }
