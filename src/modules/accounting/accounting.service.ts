@@ -136,6 +136,9 @@ export class AccountingService {
   }
 
   async getCashFlow(storeId: string, from: string, to: string) {
+    // Cash flow counts only CASH movements. The 'cost_of_goods' category holds
+    // non-cash Accounts Payable records (invoice approved / goods received) —
+    // cash only moves when the supplier is actually paid (SUPPLIER_PAYMENT debit).
     return this.db
       .select({
         date: sql<string>`date(${ledgerEntries.entryDate})`,
@@ -147,6 +150,7 @@ export class AccountingService {
       .where(
         and(
           eq(ledgerEntries.storeId, storeId),
+          sql`${ledgerEntries.category} <> 'cost_of_goods'`,
           gte(ledgerEntries.entryDate, new Date(from)),
           lte(ledgerEntries.entryDate, new Date(to)),
         ),

@@ -164,6 +164,19 @@ export class AiController {
     }
   }
 
+  @Post('generate-description')
+  @ApiOperation({ summary: 'Generate product description using AI' })
+  async generateDescription(
+    @Body(new ZodValidationPipe(z.object({ productName: z.string().min(1), category: z.string().optional() })))
+    body: { productName: string; category?: string },
+  ) {
+    try {
+      return await this.aiService.generateProductDescription(body.productName, body.category);
+    } catch (err: any) {
+      throw new BadRequestException(err?.message ?? 'Description generation failed');
+    }
+  }
+
   @Post('product-intelligence')
   @ApiOperation({
     summary:

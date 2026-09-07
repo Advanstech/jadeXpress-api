@@ -37,6 +37,8 @@ async function bootstrap() {
     // ── Security ───────────────────────────────────────────────────────────
     await app.register(fastifyHelmet, {
       contentSecurityPolicy: nodeEnv === 'production',
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      crossOriginOpenerPolicy: { policy: 'unsafe-none' },
     });
 
     // ── Compression ────────────────────────────────────────────────────────

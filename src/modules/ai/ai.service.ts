@@ -179,10 +179,18 @@ export class AiService {
         let rawBase64 = base64Image;
         let mimeType = 'image/jpeg';
 
-        if (!rawBase64 && imageUrl?.startsWith('data:')) {
+        if (rawBase64?.startsWith('data:')) {
+          const parts = rawBase64.split(';base64,');
+          if (parts.length === 2) {
+            mimeType = parts[0].replace('data:', '');
+            rawBase64 = parts[1];
+          }
+        } else if (imageUrl?.startsWith('data:')) {
           const parts = imageUrl.split(';base64,');
-          mimeType = parts[0].replace('data:', '');
-          rawBase64 = parts[1];
+          if (parts.length === 2) {
+            mimeType = parts[0].replace('data:', '');
+            rawBase64 = parts[1];
+          }
         }
 
         if (rawBase64) {
@@ -220,30 +228,30 @@ Extract product details into a clean JSON object ONLY (no markdown formatting, n
       }
     }
 
-    // Smart Fallback Parser when AI API key is not present or base64 format differs
-    const cleanName = fileName ? fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ') : 'Tobinco Vitamin C 1000mg';
-    const isPharma = /vitamin|supp|tablet|capsule|syrup|tobinco|paracetamol/i.test(cleanName);
+    // Smart Fallback Parser when AI API key is not present or extraction fails
+    const cleanName = fileName ? fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ').trim() : 'Unnamed Product';
+    const hasMeaningfulName = cleanName.length > 3 && !/^\d+$/.test(cleanName) && !/^image\s+\d+/i.test(cleanName);
+    const productName = hasMeaningfulName ? cleanName.charAt(0).toUpperCase() + cleanName.slice(1) : 'Unnamed Product';
 
     return {
       extractedData: {
-        name: cleanName.length > 3 ? cleanName.charAt(0).toUpperCase() + cleanName.slice(1) : 'Vitamin C 1000mg Effervescent',
+        name: productName,
         sku: `SKU-${Math.floor(1000 + Math.random() * 9000)}`,
-        description: 'High-strength Vitamin C immunity formula for daily wellness and cellular support.',
-        category: isPharma ? 'Vitamins & Supplements' : 'General Inventory',
-        unit: 'bottle',
-        costPriceGhs: 25.00,
-        sellingPriceGhs: 40.00,
+        description: '',
+        category: 'General Inventory',
+        unit: 'piece',
+        costPriceGhs: '',
+        sellingPriceGhs: '',
         productType: 'supplement',
-        manufacturer: 'Tobinco Pharmaceuticals',
-        suggestedStudioPrompt: `Studio product photography of ${cleanName}, pristine white background, commercial lighting`,
-        lineItems: [
-          { description: cleanName, quantity: 24, unitCost: 2500, total: 60000 },
-        ],
-        vendor: 'Tobinco Pharmaceuticals Ltd',
+        manufacturer: '',
+        suggestedStudioPrompt: `Studio product photography of ${productName}, pristine white background, commercial lighting`,
+        lineItems: [],
+        vendor: '',
       },
-      confidence: 0.89,
+      confidence: 0.0,
       source: 'smart-vision-parser-fallback',
       isMocked: true,
+      requiresReview: true,
     };
   }
 
@@ -711,47 +719,19 @@ Respond with JSON ONLY in this exact shape:
     const apiKey = openaiKey || fallbackKey;
     
     // Always use fallback if key is missing or invalid so the UI doesn't break
-    const useFallback = !apiKey || apiKey.startsWith('sk-...');
+    const useFallback = !apiKey || apiKey.length < 10;
 
     const categoryHint = category ? `, ${category} product` : ', pharmaceutical supplement';
     const descHint = description ? `. ${description}` : '';
     const prompt = `Professional product photography of ${productName}${categoryHint}${descHint}. Studio lighting, clean white background, sharp focus, high resolution, commercial product shot style. Show the actual product packaging or bottle clearly. Do not include random background elements.`;
 
     if (useFallback) {
-      console.log('[AI IMAGE GEN] Using fallback image search due to missing/invalid API key');
+      console.log('[AI IMAGE GEN] Using fallback Pollinations AI image generator due to missing/invalid API key');
       
-      const cleanName = productName.replace(/[^a-zA-Z\s]/g, ' ').replace(/\s+/g, ' ').trim();
-      const words = cleanName.split(' ');
+      const seed = Math.floor(Math.random() * 1000000);
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=800&height=800&nologo=true&seed=${seed}`;
       
-      const searchAttempts = [
-        productName,
-        cleanName,
-        words.slice(0, 3).join(' '),
-        words.slice(0, 2).join(' '),
-        category || 'product'
-      ];
-
-      for (const attempt of searchAttempts) {
-        if (!attempt || attempt.trim().length === 0) continue;
-        try {
-          const query = encodeURIComponent(attempt.trim());
-          const url = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${query}&gsrlimit=1&prop=pageimages&pithumbsize=1024&format=json`;
-          const res = await fetch(url);
-          const data = await res.json();
-          const pages = data?.query?.pages;
-          if (pages) {
-            const firstPageId = Object.keys(pages)[0];
-            const imgUrl = pages[firstPageId]?.thumbnail?.source;
-            if (imgUrl) {
-               return { imageUrl: imgUrl, model: 'wikipedia-search' };
-            }
-          }
-        } catch (e) {
-          // ignore and try next
-        }
-      }
-      
-      return { imageUrl: 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?q=80&w=1024&auto=format&fit=crop', model: 'mock-dalle' };
+      return { imageUrl: url, model: 'pollinations-ai' };
     }
 
     try {
@@ -781,6 +761,49 @@ Respond with JSON ONLY in this exact shape:
         model: 'fallback-error' 
       };
     }
+  }
+
+  /**
+   * Generates an SEO-optimized product description using AI.
+   */
+  async generateProductDescription(productName: string, category?: string): Promise<{ description: string }> {
+    const geminiKey = this.config.get<string>('ai.geminiApiKey') || process.env.GEMINI_API_KEY;
+    const openaiKey = this.config.get<string>('ai.openaiApiKey') || process.env.OPENAI_API_KEY;
+
+    const prompt = `Write a short, engaging, and professional product description for a product named "${productName}"${category ? ` in the ${category} category` : ''}. The description should be 2-3 sentences long, highlight potential benefits, and be suitable for an e-commerce pharmacy/wellness store. Do not use markdown.`;
+
+    if (geminiKey && geminiKey.length > 5) {
+      try {
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const result = await model.generateContent(prompt);
+        let text = result.response.text().trim();
+        return { description: text };
+      } catch (e) {
+        console.warn('[AI DESC GEN GEMINI WARN] Falling back:', e);
+      }
+    }
+
+    if (openaiKey && openaiKey.length > 5) {
+      try {
+        const OpenAI = require('openai').default;
+        const openai = new OpenAI({ apiKey: openaiKey });
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.7,
+        });
+        const text = completion.choices[0]?.message?.content?.trim();
+        if (text) return { description: text };
+      } catch (e) {
+        console.warn('[AI DESC GEN OPENAI WARN] Falling back:', e);
+      }
+    }
+
+    // Fallback if no keys
+    return {
+      description: `${productName} is a premium wellness product designed to support your daily health regimen. It is carefully formulated to provide maximum benefits and high-quality results.`,
+    };
   }
 
   /**

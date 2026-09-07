@@ -4,8 +4,10 @@ import { ROLES_KEY, AppRole } from '../decorators/roles.decorator';
 import { JwtPayload } from '../decorators/current-user.decorator';
 import { FastifyRequest } from 'fastify';
 
-// Role hierarchy: owner > manager > supervisor > cashier
+// Role hierarchy: root > super_admin > owner > manager > supervisor > cashier
 const ROLE_HIERARCHY: Record<AppRole, number> = {
+  root: 10,
+  super_admin: 9,
   owner: 5,
   manager: 4,
   supervisor: 3,

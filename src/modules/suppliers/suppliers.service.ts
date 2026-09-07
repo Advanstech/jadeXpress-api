@@ -378,6 +378,32 @@ export class SuppliersService {
           updatedAt: new Date(),
         })
         .where(eq(purchaseOrders.id, po.id));
+
+      // Accounting sync — record the Accounts Payable liability when goods are
+      // received, but only if no AP entry exists yet (approval may have written one).
+      const existingAp = await tx
+        .select({ id: ledgerEntries.id })
+        .from(ledgerEntries)
+        .where(
+          and(
+            eq(ledgerEntries.referenceType, 'purchase_invoice'),
+            eq(ledgerEntries.referenceId, po.id),
+          ),
+        )
+        .limit(1);
+
+      if (existingAp.length === 0) {
+        await tx.insert(ledgerEntries).values({
+          storeId: po.storeId,
+          entryType: 'credit', // Liability increases (non-cash — excluded from cash flow)
+          category: 'cost_of_goods',
+          amountPesewas: po.totalPesewas,
+          description: `Goods Received (AP) - PO #${po.poNumber}`,
+          referenceType: 'purchase_invoice',
+          referenceId: po.id,
+          performedById: receivedById,
+        });
+      }
     });
 
     return { success: true, purchaseOrderId: po.id };
@@ -411,22 +437,11 @@ export class SuppliersService {
         })
         .where(eq(purchaseOrders.id, id));
 
-      // 2. Ledger Entry (Debit AP)
+      // 2. Ledger Entry — single debit (cash outflow). The previous matching
+      // credit entry canceled this out in cash-flow reports, hiding payments.
       await tx.insert(ledgerEntries).values({
         storeId: po.storeId,
         entryType: 'debit',
-        category: 'expense',
-        amountPesewas: dto.amountPesewas,
-        referenceType: 'SUPPLIER_PAYMENT',
-        referenceId: dto.reference || `PAY-${Date.now().toString().slice(-6)}`,
-        description: `Supplier Payment (AP Reduction) for PO ${po.poNumber} via ${dto.paymentMethod.toUpperCase()}`,
-        performedById: staffId,
-      });
-
-      // 3. Ledger Entry (Credit Cash/Bank)
-      await tx.insert(ledgerEntries).values({
-        storeId: po.storeId,
-        entryType: 'credit',
         category: 'expense',
         amountPesewas: dto.amountPesewas,
         referenceType: 'SUPPLIER_PAYMENT',
@@ -455,6 +470,16 @@ export class SuppliersService {
     if (!po) throw new NotFoundException('Purchase order not found');
 
     return await this.db.transaction(async (tx) => {
+      // Sync edited prices to products
+      if (items && items.length > 0) {
+        for (const item of items) {
+          await tx
+            .update(products)
+            .set({ sellingPricePesewas: item.sellingPricePesewas, updatedAt: new Date() })
+            .where(eq(products.id, item.productId));
+        }
+      }
+
       const poItems = await tx
         .select()
         .from(purchaseItems)
