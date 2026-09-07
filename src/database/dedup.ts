@@ -2,10 +2,6 @@ import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import { products, stockItems, stockBatches, stockMovements } from './schema';
 import { eq, desc, inArray } from 'drizzle-orm';
-import * as dotenv from 'dotenv';
-import * as path from 'path';
-
-dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 async function dedup() {
   const sql = neon(process.env.DATABASE_URL!);
