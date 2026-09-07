@@ -428,17 +428,111 @@ export class SuppliersService {
 
   async approvePurchaseOrder(id: string, staffId: string, notes?: string) {
     const [po] = await this.db
-      .update(purchaseOrders)
-      .set({
-        approvedById: staffId,
-        status: 'invoiced', // Approved and ready for payment
-        updatedAt: new Date(),
-      })
+      .select()
+      .from(purchaseOrders)
       .where(eq(purchaseOrders.id, id))
-      .returning();
+      .limit(1);
 
     if (!po) throw new NotFoundException('Purchase order not found');
-    return po;
+
+    return await this.db.transaction(async (tx) => {
+      const poItems = await tx
+        .select()
+        .from(purchaseItems)
+        .where(eq(purchaseItems.purchaseOrderId, id));
+
+      const existingBatches = await tx
+        .select({ id: stockBatches.id })
+        .from(stockBatches)
+        .where(eq(stockBatches.purchaseOrderId, id))
+        .limit(1);
+
+      // Only create stock records on first approval (avoid double-receiving)
+      if (existingBatches.length === 0) {
+        for (const item of poItems) {
+          const receiveQty = item.quantityReceived > 0 ? item.quantityReceived : item.quantityOrdered;
+          if (receiveQty <= 0) continue;
+
+          // If we are auto-receiving on approval, persist the received quantity
+          if (item.quantityReceived === 0) {
+            await tx
+              .update(purchaseItems)
+              .set({ quantityReceived: receiveQty })
+              .where(eq(purchaseItems.id, item.id));
+          }
+
+          const [batch] = await tx.insert(stockBatches).values({
+            productId: item.productId,
+            storeId: po.storeId,
+            supplierId: po.supplierId,
+            purchaseOrderId: po.id,
+            batchNumber: item.batchNumber ?? `B-${Date.now().toString(36).toUpperCase()}`,
+            quantityReceived: receiveQty,
+            quantityRemaining: receiveQty,
+            costPricePesewas: item.unitCostPesewas,
+            expiryDate: item.expiryDate,
+          }).returning();
+
+          const [existing] = await tx
+            .select()
+            .from(stockItems)
+            .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, po.storeId)))
+            .limit(1);
+
+          const qtyBefore = existing?.quantityOnHand ?? 0;
+          const qtyAfter = qtyBefore + receiveQty;
+
+          if (existing) {
+            await tx
+              .update(stockItems)
+              .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
+              .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, po.storeId)));
+          } else {
+            await tx.insert(stockItems).values({
+              productId: item.productId,
+              storeId: po.storeId,
+              quantityOnHand: qtyAfter,
+              lastMovementAt: new Date(),
+            });
+          }
+
+          await tx.insert(stockMovements).values({
+            productId: item.productId,
+            storeId: po.storeId,
+            batchId: batch.id,
+            type: 'purchase_in',
+            quantityChange: receiveQty,
+            quantityBefore: qtyBefore,
+            quantityAfter: qtyAfter,
+            costPricePesewas: item.unitCostPesewas,
+            referenceType: 'purchase',
+            referenceId: po.id,
+            performedById: staffId,
+            notes: notes ?? undefined,
+          });
+        }
+      }
+
+      const updatedPoItems = await tx
+        .select()
+        .from(purchaseItems)
+        .where(eq(purchaseItems.purchaseOrderId, id));
+
+      const fullyReceived = updatedPoItems.every((i) => i.quantityReceived >= i.quantityOrdered);
+
+      const [approved] = await tx
+        .update(purchaseOrders)
+        .set({
+          approvedById: staffId,
+          status: 'invoiced', // Approved and ready for payment
+          deliveredAt: fullyReceived ? new Date() : undefined,
+          updatedAt: new Date(),
+        })
+        .where(eq(purchaseOrders.id, id))
+        .returning();
+
+      return { ...approved, items: updatedPoItems };
+    });
   }
 
   async rejectPurchaseOrder(id: string, staffId: string, notes?: string) {

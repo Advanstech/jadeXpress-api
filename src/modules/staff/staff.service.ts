@@ -231,7 +231,7 @@ export class StaffService {
         pinHash,
         failedPinAttempts: 0,
         pinLockedUntil: null,
-        requiresPinChange: false,
+        requiresPinChange: true,
         updatedAt: new Date(),
       })
       .where(eq(staffProfile.id, id));
