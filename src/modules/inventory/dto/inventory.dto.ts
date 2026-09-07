@@ -4,6 +4,7 @@ export const CreateProductSchema = z.object({
   sku: z.string().min(1).max(100),
   barcode: z.string().max(100).optional().nullable(),
   name: z.string().min(1).max(255),
+  slug: z.string().min(1).max(255).optional().nullable(),
   genericName: z.string().max(255).optional().nullable(),
   description: z.string().optional().nullable(),
   categoryId: z.string().uuid().optional().nullable().or(z.literal('')),

@@ -262,7 +262,9 @@ export class InventoryService {
     return this.getProductById(id);
   }
 
-  async getPublicProductBySlug(slug: string) {
+  async getPublicProductBySlug(slugOrId: string) {
+    // Storefront cards link slug-less products to /product/[uuid] — accept both
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slugOrId);
     const [row] = await this.db
       .select({
         product: products,
@@ -272,7 +274,7 @@ export class InventoryService {
       .from(products)
       .leftJoin(categories, eq(products.categoryId, categories.id))
       .leftJoin(stockItems, eq(stockItems.productId, products.id))
-      .where(eq(products.slug, slug))
+      .where(isUuid ? or(eq(products.id, slugOrId), eq(products.slug, slugOrId)) : eq(products.slug, slugOrId))
       .groupBy(products.id, categories.id)
       .limit(1);
     if (!row) throw new NotFoundException('Product not found');
@@ -296,6 +298,31 @@ export class InventoryService {
     return product;
   }
 
+  // ── Slug helpers ──────────────────────────────────────────────────────────
+  private slugify(text: string): string {
+    return text
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 200);
+  }
+
+  private async generateUniqueSlug(name: string, excludeId?: string): Promise<string> {
+    const base = this.slugify(name) || `product-${Date.now().toString(36)}`;
+    let slug = base;
+    let counter = 2;
+    for (;;) {
+      const [existing] = await this.db
+        .select({ id: products.id })
+        .from(products)
+        .where(eq(products.slug, slug))
+        .limit(1);
+      if (!existing || existing.id === excludeId) return slug;
+      slug = `${base}-${counter++}`;
+    }
+  }
+
   async createProduct(dto: CreateProductDto, storeId?: string) {
     const existing = await this.db
       .select({ id: products.id })
@@ -307,7 +334,9 @@ export class InventoryService {
       throw new ConflictException(`SKU '${dto.sku}' already exists`);
     }
 
-    const [product] = await this.db.insert(products).values(dto).returning();
+    // Storefront sync — every product needs a public slug for /product/[slug] URLs
+    const slug = dto.slug?.trim() || await this.generateUniqueSlug(dto.name);
+    const [product] = await this.db.insert(products).values({ ...dto, slug }).returning();
 
     // Auto-create a stock item row so the product appears in inventory immediately
     if (storeId && product) {
@@ -327,9 +356,22 @@ export class InventoryService {
   }
 
   async updateProduct(id: string, dto: UpdateProductDto) {
+    // Storefront sync — backfill a slug for legacy products when they get edited
+    const setValues: UpdateProductDto = { ...dto };
+    if (dto.name && !dto.slug) {
+      const [current] = await this.db
+        .select({ slug: products.slug })
+        .from(products)
+        .where(eq(products.id, id))
+        .limit(1);
+      if (current && !current.slug) {
+        setValues.slug = await this.generateUniqueSlug(dto.name, id);
+      }
+    }
+
     const [product] = await this.db
       .update(products)
-      .set({ ...dto, updatedAt: new Date() })
+      .set({ ...setValues, updatedAt: new Date() })
       .where(eq(products.id, id))
       .returning();
 
