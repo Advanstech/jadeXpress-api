@@ -65,5 +65,9 @@ export type PayPurchaseOrderDto = z.infer<typeof PayPurchaseOrderSchema>;
 
 export const ApprovePurchaseOrderSchema = z.object({
   notes: z.string().optional(),
+  items: z.array(z.object({
+    productId: z.string().uuid(),
+    sellingPricePesewas: z.number().int().min(0),
+  })).optional(),
 });
 export type ApprovePurchaseOrderDto = z.infer<typeof ApprovePurchaseOrderSchema>;

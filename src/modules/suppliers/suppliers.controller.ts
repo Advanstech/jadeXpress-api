@@ -134,7 +134,7 @@ export class SuppliersController {
     @Body(new ZodValidationPipe(ApprovePurchaseOrderSchema)) dto: ApprovePurchaseOrderDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.suppliersService.approvePurchaseOrder(id, user.sub, dto.notes);
+    return this.suppliersService.approvePurchaseOrder(id, user.sub, dto.notes, dto.items);
   }
 
   @Put('purchase-orders/:id/reject')

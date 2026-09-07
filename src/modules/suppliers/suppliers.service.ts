@@ -11,7 +11,9 @@ import {
   stockMovements,
   categories,
   ledgerEntries,
+  staffProfile,
 } from '../../database/schema';
+import { getTableColumns } from 'drizzle-orm';
 import { products } from '../../database/schema/inventory';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type {
@@ -86,8 +88,14 @@ export class SuppliersService {
     const where = eq(purchaseOrders.supplierId, supplierId);
 
     const [data, [{ count }]] = await Promise.all([
-      this.db.select().from(purchaseOrders).where(where)
-        .orderBy(desc(purchaseOrders.orderDate)).limit(limit).offset(offset),
+      this.db.select({
+        ...getTableColumns(purchaseOrders),
+        approverName: sql<string>`concat(${staffProfile.firstName}, ' ', ${staffProfile.lastName})`,
+      })
+      .from(purchaseOrders)
+      .leftJoin(staffProfile, eq(purchaseOrders.approvedById, staffProfile.id))
+      .where(where)
+      .orderBy(desc(purchaseOrders.orderDate)).limit(limit).offset(offset),
       this.db.select({ count: sql<number>`count(*)` }).from(purchaseOrders).where(where),
     ]);
     return paginate(data, Number(count), page, limit);
@@ -235,8 +243,14 @@ export class SuppliersService {
     const where = eq(purchaseOrders.storeId, storeId);
 
     const [data, [{ count }]] = await Promise.all([
-      this.db.select().from(purchaseOrders).where(where)
-        .orderBy(desc(purchaseOrders.orderDate)).limit(limit).offset(offset),
+      this.db.select({
+        ...getTableColumns(purchaseOrders),
+        approverName: sql<string>`concat(${staffProfile.firstName}, ' ', ${staffProfile.lastName})`,
+      })
+      .from(purchaseOrders)
+      .leftJoin(staffProfile, eq(purchaseOrders.approvedById, staffProfile.id))
+      .where(where)
+      .orderBy(desc(purchaseOrders.orderDate)).limit(limit).offset(offset),
       this.db.select({ count: sql<number>`count(*)` }).from(purchaseOrders).where(where),
     ]);
     return paginate(data, Number(count), page, limit);
@@ -244,8 +258,12 @@ export class SuppliersService {
 
   async getPurchaseOrder(id: string) {
     const [po] = await this.db
-      .select()
+      .select({
+        ...getTableColumns(purchaseOrders),
+        approverName: sql<string>`concat(${staffProfile.firstName}, ' ', ${staffProfile.lastName})`,
+      })
       .from(purchaseOrders)
+      .leftJoin(staffProfile, eq(purchaseOrders.approvedById, staffProfile.id))
       .where(eq(purchaseOrders.id, id))
       .limit(1);
     if (!po) throw new NotFoundException('Purchase order not found');
@@ -261,6 +279,7 @@ export class SuppliersService {
         batchNumber: purchaseItems.batchNumber,
         sku: products.sku,
         name: products.name,
+        sellingPricePesewas: products.sellingPricePesewas,
       })
       .from(purchaseItems)
       .leftJoin(products, eq(purchaseItems.productId, products.id))
@@ -426,7 +445,7 @@ export class SuppliersService {
     });
   }
 
-  async approvePurchaseOrder(id: string, staffId: string, notes?: string) {
+  async approvePurchaseOrder(id: string, staffId: string, notes?: string, items?: { productId: string, sellingPricePesewas: number }[]) {
     const [po] = await this.db
       .select()
       .from(purchaseOrders)
@@ -530,6 +549,18 @@ export class SuppliersService {
         })
         .where(eq(purchaseOrders.id, id))
         .returning();
+
+      // Ledger Entry (Record Accounts Payable / Cost of Goods)
+      await tx.insert(ledgerEntries).values({
+        storeId: po.storeId,
+        entryType: 'credit', // Liability increases
+        category: 'cost_of_goods',
+        amountPesewas: po.totalPesewas,
+        description: `Invoice Approved (AP) - PO #${po.poNumber}`,
+        referenceType: 'purchase_invoice',
+        referenceId: po.id,
+        performedById: staffId,
+      });
 
       return { ...approved, items: updatedPoItems };
     });

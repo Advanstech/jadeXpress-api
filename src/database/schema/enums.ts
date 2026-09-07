@@ -9,6 +9,8 @@ export const storeStatusEnum = pgEnum('store_status', ['active', 'inactive', 'co
 
 // ─── User & Auth ──────────────────────────────────────────────────────────────
 export const userRoleEnum = pgEnum('user_role', [
+  'super_admin',
+  'root',
   'owner',
   'manager',
   'supervisor',
