@@ -241,6 +241,10 @@ export class StaffService {
     const rawPin = Math.floor(1000 + Math.random() * 9000).toString().trim(); // 4 digits
     const pinHash = await bcrypt.hash(rawPin, 12);
 
+    // Debug: verify the hash immediately to ensure it matches the raw PIN
+    const immediateVerify = await bcrypt.compare(rawPin, pinHash);
+    console.log(`[DEBUG generateTemporaryPin] staffId=${id} rawPin=${rawPin} immediateVerify=${immediateVerify}`);
+
     await this.db
       .update(staffProfile)
       .set({

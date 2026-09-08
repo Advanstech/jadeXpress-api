@@ -78,7 +78,10 @@ export class AuthService {
       throw new UnauthorizedException('Account locked due to too many failed PIN attempts');
     }
 
-    const valid = await bcrypt.compare(dto.pin.trim(), staff.pinHash);
+    const trimmedPin = dto.pin.trim();
+    console.log(`[DEBUG pinLogin] staffId=${staff.id} rawInputPin='${dto.pin}' trimmedInputPin='${trimmedPin}' storedPinHashLength=${staff.pinHash?.length}`);
+    const valid = await bcrypt.compare(trimmedPin, staff.pinHash);
+    console.log(`[DEBUG pinLogin] staffId=${staff.id} valid=${valid}`);
     if (!valid) {
       await this.recordPinFailure(staff.id, staff.failedPinAttempts ?? 0);
       throw new UnauthorizedException('Invalid PIN');
