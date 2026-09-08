@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, ConflictException } from '@nestjs/common';
 import { eq, and, or, desc, sql, ilike, inArray, sum } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
@@ -192,6 +192,25 @@ export class SuppliersService {
 
   // ── Purchase Orders ────────────────────────────────────────────────────────
   async createPurchaseOrder(dto: CreatePurchaseOrderDto, raisedById: string) {
+    // Prevent duplicate invoice upload — check before anything else
+    if (dto.invoiceNumber) {
+      const [existing] = await this.db
+        .select({ id: supplierInvoices.id, supplierId: supplierInvoices.supplierId })
+        .from(supplierInvoices)
+        .where(
+          and(
+            eq(supplierInvoices.invoiceNumber, dto.invoiceNumber),
+            eq(supplierInvoices.supplierId, dto.supplierId),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        throw new ConflictException(
+          `Invoice number "${dto.invoiceNumber}" already exists for this supplier. Duplicate invoices are not allowed.`,
+        );
+      }
+    }
+
     const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
 
     const subtotal = dto.items.reduce(
@@ -242,6 +261,37 @@ export class SuppliersService {
 
       return { ...po, items: insertedItems };
     });
+  }
+
+  // ── Check if invoice number already exists (for frontend pre-check) ─────────
+  async checkInvoiceNumber(invoiceNumber: string, supplierId?: string) {
+    if (!invoiceNumber || invoiceNumber.trim().length === 0) {
+      return { exists: false };
+    }
+    const conditions = [eq(supplierInvoices.invoiceNumber, invoiceNumber.trim())];
+    if (supplierId) {
+      conditions.push(eq(supplierInvoices.supplierId, supplierId));
+    }
+    const [existing] = await this.db
+      .select({
+        id: supplierInvoices.id,
+        supplierId: supplierInvoices.supplierId,
+        invoiceNumber: supplierInvoices.invoiceNumber,
+        supplierName: suppliers.name,
+      })
+      .from(supplierInvoices)
+      .leftJoin(suppliers, eq(supplierInvoices.supplierId, suppliers.id))
+      .where(and(...conditions))
+      .limit(1);
+    if (existing) {
+      return {
+        exists: true,
+        supplierId: existing.supplierId,
+        supplierName: existing.supplierName,
+        invoiceNumber: existing.invoiceNumber,
+      };
+    }
+    return { exists: false };
   }
 
   async listPurchaseOrders(storeId: string, query: PaginationDto) {

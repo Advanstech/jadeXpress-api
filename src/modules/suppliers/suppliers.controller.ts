@@ -84,6 +84,15 @@ export class SuppliersController {
     return this.suppliersService.delete(id);
   }
 
+  @Get('invoices/check')
+  @ApiOperation({ summary: 'Check if an invoice number already exists (pre-submission duplicate check)' })
+  checkInvoiceNumber(
+    @Query('invoiceNumber') invoiceNumber: string,
+    @Query('supplierId') supplierId?: string,
+  ) {
+    return this.suppliersService.checkInvoiceNumber(invoiceNumber, supplierId);
+  }
+
   @Get('purchase-orders/store')
   @ApiOperation({ summary: 'List POs for current store' })
   listPOs(@CurrentUser() user: JwtPayload, @Query(new ZodValidationPipe(PaginationSchema)) query: any) {
