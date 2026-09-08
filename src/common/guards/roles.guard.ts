@@ -33,7 +33,11 @@ export class RolesGuard implements CanActivate {
 
     if (!user) throw new ForbiddenException('Not authenticated');
 
-    const userLevel = ROLE_HIERARCHY[user.role?.toLowerCase() as AppRole] ?? 0;
+    // root and super_admin always bypass any @Roles check — full privileges
+    const userRole = user.role?.toLowerCase() as AppRole;
+    if (userRole === 'root' || userRole === 'super_admin') return true;
+
+    const userLevel = ROLE_HIERARCHY[userRole] ?? 0;
     const minRequired = Math.min(...requiredRoles.map((r) => ROLE_HIERARCHY[r?.toLowerCase() as AppRole] ?? 99));
 
     if (userLevel < minRequired) {

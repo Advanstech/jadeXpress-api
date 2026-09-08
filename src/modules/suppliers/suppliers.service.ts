@@ -21,6 +21,7 @@ import type {
   CreatePurchaseOrderDto, ReceiveGoodsDto,
   PayPurchaseOrderDto,
 } from './dto/suppliers.dto';
+import { titleCase, normalizeForCompare } from '../../common/utils/normalize';
 
 @Injectable()
 export class SuppliersService {
@@ -57,25 +58,31 @@ export class SuppliersService {
   }
 
   async create(dto: CreateSupplierDto) {
-    // Deduplicate by name (case-insensitive)
+    const normalizedName = titleCase(dto.name);
+    // Deduplicate by name (case-insensitive, normalized)
     const [existing] = await this.db
       .select()
       .from(suppliers)
-      .where(ilike(suppliers.name, dto.name))
+      .where(ilike(suppliers.name, normalizedName))
       .limit(1);
 
-    if (existing) {
+    // Double-check with normalized comparison to catch special-char differences
+    if (existing && normalizeForCompare(existing.name) === normalizeForCompare(normalizedName)) {
       return existing;
     }
 
-    const [supplier] = await this.db.insert(suppliers).values(dto).returning();
+    const [supplier] = await this.db.insert(suppliers).values({ ...dto, name: normalizedName }).returning();
     return supplier;
   }
 
   async update(id: string, dto: UpdateSupplierDto) {
+    const updateData = { ...dto };
+    if (dto.name) {
+      updateData.name = titleCase(dto.name);
+    }
     const [supplier] = await this.db
       .update(suppliers)
-      .set({ ...dto, updatedAt: new Date() })
+      .set({ ...updateData, updatedAt: new Date() })
       .where(eq(suppliers.id, id))
       .returning();
     if (!supplier) throw new NotFoundException('Supplier not found');

@@ -23,6 +23,7 @@ import type {
   CreateBatchDto,
   CreateCategoryDto,
 } from './dto/inventory.dto';
+import { titleCase } from '../../common/utils/normalize';
 
 const CATEGORY_SLUG_ALIASES: Record<string, string[]> = {
   vitamins: ['vitamins-minerals', 'vitamins'],
@@ -324,19 +325,20 @@ export class InventoryService {
   }
 
   async createProduct(dto: CreateProductDto, storeId?: string) {
+    const normalizedDto = { ...dto, name: titleCase(dto.name) };
     const existing = await this.db
       .select({ id: products.id })
       .from(products)
-      .where(eq(products.sku, dto.sku))
+      .where(eq(products.sku, normalizedDto.sku))
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`SKU '${dto.sku}' already exists`);
+      throw new ConflictException(`SKU '${normalizedDto.sku}' already exists`);
     }
 
     // Storefront sync — every product needs a public slug for /product/[slug] URLs
-    const slug = dto.slug?.trim() || await this.generateUniqueSlug(dto.name);
-    const [product] = await this.db.insert(products).values({ ...dto, slug }).returning();
+    const slug = normalizedDto.slug?.trim() || await this.generateUniqueSlug(normalizedDto.name);
+    const [product] = await this.db.insert(products).values({ ...normalizedDto, slug }).returning();
 
     // Auto-create a stock item row so the product appears in inventory immediately
     if (storeId && product) {
@@ -358,14 +360,17 @@ export class InventoryService {
   async updateProduct(id: string, dto: UpdateProductDto) {
     // Storefront sync — backfill a slug for legacy products when they get edited
     const setValues: UpdateProductDto = { ...dto };
-    if (dto.name && !dto.slug) {
+    if (dto.name) {
+      setValues.name = titleCase(dto.name);
+    }
+    if (setValues.name && !dto.slug) {
       const [current] = await this.db
         .select({ slug: products.slug })
         .from(products)
         .where(eq(products.id, id))
         .limit(1);
       if (current && !current.slug) {
-        setValues.slug = await this.generateUniqueSlug(dto.name, id);
+        setValues.slug = await this.generateUniqueSlug(setValues.name!, id);
       }
     }
 
