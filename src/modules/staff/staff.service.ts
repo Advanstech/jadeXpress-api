@@ -103,7 +103,7 @@ export class StaffService {
   }
 
   async create(dto: CreateStaffDto) {
-    const generatedPin = dto.pin || Math.floor(100000 + Math.random() * 900000).toString(); // 6 digit PIN
+    const generatedPin = dto.pin ? dto.pin.trim() : Math.floor(100000 + Math.random() * 900000).toString(); // 6 digit PIN
     const generatedPassword = dto.password || Math.random().toString(36).slice(-12);
 
     const pinHash = await bcrypt.hash(generatedPin, 12);
@@ -238,7 +238,7 @@ export class StaffService {
     const [staff] = await this.db.select().from(staffProfile).where(eq(staffProfile.id, id)).limit(1);
     if (!staff) throw new NotFoundException('Staff member not found');
 
-    const rawPin = Math.floor(1000 + Math.random() * 9000).toString(); // 4 digits
+    const rawPin = Math.floor(1000 + Math.random() * 9000).toString().trim(); // 4 digits
     const pinHash = await bcrypt.hash(rawPin, 12);
 
     await this.db
@@ -360,7 +360,7 @@ export class StaffService {
     if (!staff) throw new NotFoundException('Staff member not found');
     if (!staff.email) throw new NotFoundException('Staff member has no email address on record');
 
-    const rawPin = Math.floor(1000 + Math.random() * 9000).toString();
+    const rawPin = Math.floor(1000 + Math.random() * 9000).toString().trim();
     const pinHash = await bcrypt.hash(rawPin, 12);
 
     await this.db

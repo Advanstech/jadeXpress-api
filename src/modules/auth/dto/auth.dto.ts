@@ -9,7 +9,7 @@ export const LoginSchema = z.object({
 
 // PIN login — POS touchscreen cashier login
 export const PinLoginSchema = z.object({
-  pin: z.string().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
+  pin: z.string().trim().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
   staffId: z.string().uuid().optional(),
   storeId: z.string().uuid().optional(),
   email: z.string().email().optional(),
@@ -21,7 +21,7 @@ export const PinLoginSchema = z.object({
 // Manager PIN verification — for overrides/refunds/discounts without full re-login
 export const PinVerifySchema = z.object({
   staffId: z.string().uuid(),
-  pin: z.string().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
+  pin: z.string().trim().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
 });
 
 export const RefreshTokenSchema = z.object({
@@ -29,8 +29,8 @@ export const RefreshTokenSchema = z.object({
 });
 
 export const ChangePinSchema = z.object({
-  currentPin: z.string().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
-  newPin: z.string().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
+  currentPin: z.string().trim().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
+  newPin: z.string().trim().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
 });
 
 export type LoginDto = z.infer<typeof LoginSchema>;

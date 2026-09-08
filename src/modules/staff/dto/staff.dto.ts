@@ -6,8 +6,8 @@ export const CreateStaffSchema = z.object({
   lastName: z.string().min(1).max(100),
   email: z.string().email().optional(),
   phone: z.string().max(30).optional(),
-  role: z.enum(['owner','manager','supervisor','cashier','pharmacist','stock_officer']).default('cashier'),
-  pin: z.string().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric').optional(),
+  role: z.enum(['owner', 'manager', 'supervisor', 'cashier', 'pharmacist', 'stock_officer']).default('cashier'),
+  pin: z.string().trim().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric').optional(),
   password: z.string().min(8).optional(),
   avatarUrl: z.string().url().optional(),
   idDocumentUrl: z.string().url().optional(),
@@ -19,10 +19,10 @@ export const CreateStaffSchema = z.object({
   bankAccountName: z.string().max(150).optional(),
   bankAccountNumber: z.string().max(50).optional(),
   bankBranch: z.string().max(100).optional(),
-  mobileMoneyProvider: z.enum(['MTN','Telecel','AirtelTigo']).optional(),
+  mobileMoneyProvider: z.enum(['MTN', 'Telecel', 'AirtelTigo']).optional(),
   mobileMoneyNumber: z.string().max(30).optional(),
   basicSalaryPesewas: z.number().int().min(0).optional(),
-  employmentType: z.enum(['full_time','part_time','contract','casual']).optional(),
+  employmentType: z.enum(['full_time', 'part_time', 'contract', 'casual']).optional(),
   employmentDate: z.coerce.date().optional(),
   nextOfKinName: z.string().max(150).optional(),
   nextOfKinPhone: z.string().max(30).optional(),
@@ -34,8 +34,8 @@ export const UpdateStaffSchema = CreateStaffSchema.omit({ pin: true, password: t
 
 export const ChangePinSchema = z.object({
   staffId: z.string().uuid(),
-  currentPin: z.string().min(4).max(6),
-  newPin: z.string().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
+  currentPin: z.string().trim().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
+  newPin: z.string().trim().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
 });
 
 export const ClockInSchema = z.object({

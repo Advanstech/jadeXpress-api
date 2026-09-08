@@ -78,7 +78,7 @@ export class AuthService {
       throw new UnauthorizedException('Account locked due to too many failed PIN attempts');
     }
 
-    const valid = await bcrypt.compare(dto.pin, staff.pinHash);
+    const valid = await bcrypt.compare(dto.pin.trim(), staff.pinHash);
     if (!valid) {
       await this.recordPinFailure(staff.id, staff.failedPinAttempts ?? 0);
       throw new UnauthorizedException('Invalid PIN');
@@ -103,7 +103,7 @@ export class AuthService {
       return { valid: false, role: '' };
     }
 
-    const valid = await bcrypt.compare(dto.pin, staff.pinHash);
+    const valid = await bcrypt.compare(dto.pin.trim(), staff.pinHash);
     if (!valid) {
       await this.recordPinFailure(staff.id, staff.failedPinAttempts ?? 0);
       return { valid: false, role: '' };
@@ -191,10 +191,10 @@ export class AuthService {
 
     if (!staff) throw new NotFoundException('Staff not found');
 
-    const valid = await bcrypt.compare(dto.currentPin, staff.pinHash);
+    const valid = await bcrypt.compare(dto.currentPin.trim(), staff.pinHash);
     if (!valid) throw new UnauthorizedException('Incorrect current PIN');
 
-    const newPinHash = await bcrypt.hash(dto.newPin, 12);
+    const newPinHash = await bcrypt.hash(dto.newPin.trim(), 12);
     
     await this.db
       .update(staffProfile)
@@ -326,7 +326,7 @@ export class AuthService {
 
     for (const token of tokens) {
       if (token.usedAt || token.expiresAt < now) continue;
-      const isValid = await bcrypt.compare(otpCode, token.codeHash);
+      const isValid = await bcrypt.compare(otpCode.trim(), token.codeHash);
       if (isValid) {
         validToken = token;
         break;
@@ -339,9 +339,10 @@ export class AuthService {
     await this.db.update(otpTokens).set({ usedAt: now }).where(eq(otpTokens.id, validToken.id));
 
     // Update credential
-    const newHash = await bcrypt.hash(newSecret, 12);
+    const trimmedSecret = newSecret.trim();
+    const newHash = await bcrypt.hash(trimmedSecret, 12);
     if (type === 'pin') {
-      if (newSecret.length < 4 || newSecret.length > 6 || !/^\d+$/.test(newSecret)) {
+      if (trimmedSecret.length < 4 || trimmedSecret.length > 6 || !/^\d+$/.test(trimmedSecret)) {
         throw new UnauthorizedException('Invalid PIN format');
       }
       await this.db.update(staffProfile).set({ pinHash: newHash, requiresPinChange: false }).where(eq(staffProfile.id, staff.id));
