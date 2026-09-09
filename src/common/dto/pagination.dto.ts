@@ -9,6 +9,7 @@ export const PaginationSchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),
   action: z.string().optional(),
+  includeInactive: z.coerce.boolean().optional(),
 });
 
 export type PaginationDto = z.infer<typeof PaginationSchema>;

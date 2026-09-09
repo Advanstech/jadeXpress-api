@@ -27,12 +27,18 @@ import { titleCase, normalizeForCompare } from '../../common/utils/normalize';
 export class SuppliersService {
   constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
 
-  async list(query: PaginationDto) {
-    const { page, limit, search } = query;
+  async list(query: PaginationDto & { includeInactive?: boolean }) {
+    const { page, limit, search, includeInactive } = query;
     const offset = (page - 1) * limit;
-    const where = search
-      ? and(ilike(suppliers.name, `%${search}%`), eq(suppliers.isActive, true))
-      : eq(suppliers.isActive, true);
+
+    const conditions: any[] = [];
+    if (search) conditions.push(ilike(suppliers.name, `%${search}%`));
+    // By default only active suppliers are listed. Product dropdowns pass
+    // includeInactive=true so a soft-deleted supplier still appears — this
+    // keeps the product's primarySupplierId reference intact on edit/save.
+    if (!includeInactive) conditions.push(eq(suppliers.isActive, true));
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     const [data, [{ count }]] = await Promise.all([
       this.db.select().from(suppliers).where(where).orderBy(suppliers.name).limit(limit).offset(offset),
