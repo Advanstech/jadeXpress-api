@@ -283,7 +283,7 @@ Extract product details into a clean JSON object ONLY (no markdown formatting, n
     }
 
     // Fallback: return original or high-quality styled preview
-    const activeImage = params.imageUrl || params.base64Image || `https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=600&auto=format&fit=crop&q=80`;
+    const activeImage = params.imageUrl || params.base64Image;
     return {
       perfectedImageUrl: activeImage,
       styleApplied: params.style ?? 'studio_white',
@@ -714,30 +714,31 @@ Respond with JSON ONLY in this exact shape:
    * Generates a photorealistic product photo for supplement/pharmacy items.
    */
   async generateProductImage(productName: string, description?: string, category?: string): Promise<{ imageUrl: string; model: string }> {
-    const openaiKey = this.config.get<string>('ai.openaiApiKey'); 
+    const openaiKey = this.config.get<string>('ai.openaiApiKey');
     const fallbackKey = process.env.OPENAI_API_KEY;
     const apiKey = openaiKey || fallbackKey;
-    
-    // Always use fallback if key is missing or invalid so the UI doesn't break
-    const useFallback = !apiKey || apiKey.length < 10;
 
     const categoryHint = category ? `, ${category} product` : ', pharmaceutical supplement';
     const descHint = description ? `. ${description}` : '';
     const prompt = `Professional product photography of ${productName}${categoryHint}${descHint}. Studio lighting, clean white background, sharp focus, high resolution, commercial product shot style. Show the actual product packaging or bottle clearly. Do not include random background elements.`;
 
-    if (useFallback) {
-      console.log('[AI IMAGE GEN] Using fallback Pollinations AI image generator due to missing/invalid API key');
-      
+    // Free, key-less AI image generator — used as primary when no OpenAI key
+    // and as a graceful fallback when DALL-E fails (quota, invalid key, etc.).
+    const pollinations = () => {
       const seed = Math.floor(Math.random() * 1000000);
       const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=800&height=800&nologo=true&seed=${seed}`;
-      
       return { imageUrl: url, model: 'pollinations-ai' };
+    };
+
+    if (!apiKey || apiKey.length < 10) {
+      console.log('[AI IMAGE GEN] No OpenAI key — using Pollinations AI');
+      return pollinations();
     }
 
     try {
       const OpenAI = require('openai').default;
       const openai = new OpenAI({ apiKey });
-      
+
       const response = await openai.images.generate({
         model: "dall-e-3",
         prompt: prompt,
@@ -754,12 +755,8 @@ Respond with JSON ONLY in this exact shape:
         model: 'dall-e-3',
       };
     } catch (err: any) {
-      console.error('[AI IMAGE GEN ERROR]', err?.message || err);
-      // Fallback on error to ensure UI continues to work flawlessly
-      return { 
-        imageUrl: 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?q=80&w=1024&auto=format&fit=crop', 
-        model: 'fallback-error' 
-      };
+      console.error('[AI IMAGE GEN ERROR] DALL-E failed, falling back to Pollinations AI:', err?.message || err);
+      return pollinations();
     }
   }
 
