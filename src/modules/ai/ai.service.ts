@@ -8,7 +8,7 @@
  *  - The expected request/response contract (so frontend can build against it now)
  *  - Mock data that matches the contract
  */
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { eq, and, or, desc } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
@@ -438,25 +438,9 @@ Return monetary values as integer Ghanaian pesewas (1 GHS = 100 pesewas). For a 
       console.warn('[AI OCR] No valid OPENAI_API_KEY or image payload — using fallback mock');
     }
 
-    return {
-      imageUrl,
-      extractedData: {
-        vendor: 'Mock Supplier Ltd',
-        invoiceNumber: 'INV-2026-001',
-        date: new Date().toISOString().split('T')[0],
-        lineItems: [
-          { description: 'Vitamin C 1000mg x30', quantity: 50, unitCost: 1200, total: 60000 },
-          { description: 'Omega 3 Fish Oil x60', quantity: 30, unitCost: 2500, total: 75000 },
-        ],
-        subtotal: 135000,
-        tax: 0,
-        total: 135000,
-      },
-      confidence: 0.87,
-      requiresConfirmation: true,
-      isMocked: true,
-      note: 'MOCKED_PENDING_MODEL_INTEGRATION — wire to vision-OCR model',
-    };
+    throw new UnprocessableEntityException(
+      'OCR extraction failed. Please check AI provider API keys/credits, or enter invoice details manually.'
+    );
   }
 
   /**

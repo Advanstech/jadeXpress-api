@@ -74,6 +74,16 @@ export class SuppliersService {
 
     // Double-check with normalized comparison to catch special-char differences
     if (existing && normalizeForCompare(existing.name) === normalizeForCompare(normalizedName)) {
+      // If the existing supplier was soft-deleted (inactive), reactivate it so
+      // the supplier becomes visible in the default active-only list again.
+      if (!existing.isActive) {
+        const [reactivated] = await this.db
+          .update(suppliers)
+          .set({ isActive: true, updatedAt: new Date() })
+          .where(eq(suppliers.id, existing.id))
+          .returning();
+        return reactivated;
+      }
       return existing;
     }
 
@@ -198,6 +208,11 @@ export class SuppliersService {
 
   // ── Purchase Orders ────────────────────────────────────────────────────────
   async createPurchaseOrder(dto: CreatePurchaseOrderDto, raisedById: string) {
+    // Trim invoice number to avoid trailing/leading whitespace mismatches
+    if (dto.invoiceNumber) {
+      dto.invoiceNumber = dto.invoiceNumber.trim();
+    }
+
     // Prevent duplicate invoice upload — check before anything else
     if (dto.invoiceNumber) {
       const [existing] = await this.db
@@ -223,6 +238,20 @@ export class SuppliersService {
       (sum, i) => sum + i.unitCostPesewas * i.quantityOrdered, 0,
     );
 
+    // Compute invoice discount in pesewas
+    let discountPesewas = 0;
+    if (dto.invoiceDiscountPercent !== undefined && dto.invoiceDiscountPercent > 0) {
+      discountPesewas = Math.round(subtotal * (dto.invoiceDiscountPercent / 100));
+    } else if (dto.invoiceDiscountGhs !== undefined && dto.invoiceDiscountGhs > 0) {
+      discountPesewas = Math.round(dto.invoiceDiscountGhs * 100);
+    }
+
+    // Invoice total after discount — frontend may also send the exact final total
+    const invoiceTotalPesewas =
+      dto.invoiceTotalGhs !== undefined
+        ? Math.round(dto.invoiceTotalGhs * 100)
+        : Math.max(0, subtotal - discountPesewas);
+
     return this.db.transaction(async (tx) => {
       const [po] = await tx.insert(purchaseOrders).values({
         poNumber,
@@ -231,9 +260,9 @@ export class SuppliersService {
         raisedById,
         approvedById: dto.approvedById,
         subtotalPesewas: subtotal,
-        totalPesewas: subtotal,
+        totalPesewas: invoiceTotalPesewas,
         paidAmountPesewas: 0,
-        balancePesewas: subtotal,
+        balancePesewas: invoiceTotalPesewas,
         paymentStatus: 'pending',
         notes: dto.notes,
         expectedDeliveryDate: dto.expectedDeliveryDate,
@@ -258,8 +287,11 @@ export class SuppliersService {
           supplierId: dto.supplierId,
           purchaseOrderId: po.id,
           issuedDate: dto.invoiceDate || new Date().toISOString().split('T')[0],
-          totalAmountPesewas: dto.invoiceTotalGhs ? Math.round(dto.invoiceTotalGhs * 100) : subtotal,
-          balancePesewas: dto.invoiceTotalGhs ? Math.round(dto.invoiceTotalGhs * 100) : subtotal,
+          totalAmountPesewas: invoiceTotalPesewas,
+          discountPesewas,
+          discountPercent: dto.invoiceDiscountPercent,
+          balancePesewas: invoiceTotalPesewas,
+          imageUrl: dto.invoiceImageUrl,
           ocrExtracted: true,
           ocrConfirmed: true,
         });

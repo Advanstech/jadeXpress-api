@@ -19,11 +19,11 @@ export type DrizzleDB = ReturnType<typeof drizzle<typeof schema>>;
         const pool = new Pool({
           connectionString: url,
           // Bounded pool — prevents connection sprawl under burst load
-          max: 10,
+          max: 20,
           // Reclaim idle connections so Neon compute can scale down
           idleTimeoutMillis: 30_000,
-          // Fail fast instead of queueing forever if Neon is unreachable
-          connectionTimeoutMillis: 10_000,
+          // Allow time for Neon cold-start wake-up (compute may be suspended)
+          connectionTimeoutMillis: 30_000,
         });
         return drizzle(pool, { schema });
       },

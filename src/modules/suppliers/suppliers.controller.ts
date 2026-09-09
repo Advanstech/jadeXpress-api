@@ -38,6 +38,17 @@ export class SuppliersController {
     return this.suppliersService.getById(id);
   }
 
+  // ── Static routes must be declared BEFORE parameterised routes so NestJS
+  //    doesn't match "invoices" as an :id.
+  @Get('invoices/check')
+  @ApiOperation({ summary: 'Check if an invoice number already exists (pre-submission duplicate check)' })
+  checkInvoiceNumber(
+    @Query('invoiceNumber') invoiceNumber: string,
+    @Query('supplierId') supplierId?: string,
+  ) {
+    return this.suppliersService.checkInvoiceNumber(invoiceNumber, supplierId);
+  }
+
   @Get(':id/purchase-orders')
   @ApiOperation({ summary: 'List all POs for a specific supplier' })
   getSupplierPOs(
@@ -82,15 +93,6 @@ export class SuppliersController {
   @ApiOperation({ summary: 'Delete / deactivate supplier' })
   delete(@Param('id') id: string) {
     return this.suppliersService.delete(id);
-  }
-
-  @Get('invoices/check')
-  @ApiOperation({ summary: 'Check if an invoice number already exists (pre-submission duplicate check)' })
-  checkInvoiceNumber(
-    @Query('invoiceNumber') invoiceNumber: string,
-    @Query('supplierId') supplierId?: string,
-  ) {
-    return this.suppliersService.checkInvoiceNumber(invoiceNumber, supplierId);
   }
 
   @Get('purchase-orders/store')

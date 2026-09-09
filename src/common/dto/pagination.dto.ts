@@ -9,7 +9,13 @@ export const PaginationSchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),
   action: z.string().optional(),
-  includeInactive: z.coerce.boolean().optional(),
+  includeInactive: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (val === undefined) return undefined;
+      return val === 'true' || val === '1';
+    }),
 });
 
 export type PaginationDto = z.infer<typeof PaginationSchema>;

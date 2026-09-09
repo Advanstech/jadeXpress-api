@@ -35,6 +35,9 @@ export const CreatePurchaseOrderSchema = z.object({
   invoiceNumber: z.string().optional(),
   invoiceDate: z.string().date().optional(),
   invoiceTotalGhs: z.number().optional(),
+  invoiceDiscountGhs: z.number().min(0).optional(),
+  invoiceDiscountPercent: z.number().min(0).max(100).optional(),
+  invoiceImageUrl: z.string().url().optional(),
 });
 
 export const ReceiveGoodsSchema = z.object({

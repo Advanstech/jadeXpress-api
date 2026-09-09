@@ -9,6 +9,7 @@ import {
   varchar,
   text,
   integer,
+  real,
   boolean,
   timestamp,
   date,
@@ -113,6 +114,8 @@ export const supplierInvoices = pgTable('invoice', {
   issuedDate: date('issued_date').notNull(),
   dueDate: date('due_date'),
   totalAmountPesewas: integer('total_amount_pesewas').notNull(),
+  discountPesewas: integer('discount_pesewas').notNull().default(0),
+  discountPercent: real('discount_percent'),
   paidAmountPesewas: integer('paid_amount_pesewas').notNull().default(0),
   balancePesewas: integer('balance_pesewas').notNull().default(0),
   imageUrl: text('image_url'), // scanned invoice / OCR source
