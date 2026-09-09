@@ -60,14 +60,18 @@ export class RefundsService {
     
     const initiatedById = user.sub;
     const isManager = ['manager', 'owner', 'supervisor', 'root'].includes(user.role);
-    const status = (isManager || dto.authorizedById) ? 'approved' : 'pending_approval';
+    // Only manager-level users can authorize a refund on the spot.
+    // Non-managers must submit for approval; a manager approves later.
+    const canAutoApprove = isManager;
+    const status = canAutoApprove ? 'approved' : 'pending_approval';
+    const authorizedById = canAutoApprove ? (dto.authorizedById || initiatedById) : null;
 
     const createdRefund = await this.db.transaction(async (tx) => {
       const [refund] = await tx.insert(refundRequests).values({
         saleId: dto.saleId,
         storeId: dto.storeId,
         initiatedById,
-        authorizedById: dto.authorizedById,
+        authorizedById,
         reason: dto.reason,
         method: dto.method,
         status: status,
@@ -216,8 +220,11 @@ export class RefundsService {
       .from(saleItems)
       .where(eq(saleItems.saleId, refund.saleId));
 
-    const refundedProductIds = new Set(items.map((i: any) => i.saleItemId));
-    const fullyRefunded = allSaleItems.every((si: any) => refundedProductIds.has(si.id));
+    const refundedQtyBySaleItem = items.reduce((acc: Record<string, number>, i: any) => {
+      acc[i.saleItemId] = (acc[i.saleItemId] || 0) + i.quantity;
+      return acc;
+    }, {} as Record<string, number>);
+    const fullyRefunded = allSaleItems.every((si: any) => (refundedQtyBySaleItem[si.id] || 0) >= si.quantity);
 
     await tx
       .update(sales)

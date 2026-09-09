@@ -5,7 +5,7 @@ export const CreateRefundSchema = z.object({
   storeId: z.string().uuid(),
   reason: z.enum(['customer_request','defective_product','wrong_item','overcharge','duplicate_sale','near_expiry','other']),
   method: z.enum(['cash','momo','card','store_credit']).default('cash'),
-  authorizedById: z.string().uuid(),
+  authorizedById: z.string().uuid().optional().nullable(),
   momoReference: z.string().optional(),
   notes: z.string().optional(),
   items: z.array(z.object({
