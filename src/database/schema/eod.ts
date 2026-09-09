@@ -20,7 +20,7 @@ import { relations } from 'drizzle-orm';
 import { stores } from './organisation';
 import { staffProfile } from './staff';
 
-export const eodStatusEnum = ['in_progress', 'completed', 'discrepancy'] as const;
+export const eodStatusEnum = ['in_progress', 'pending_approval', 'completed', 'rejected', 'discrepancy'] as const;
 
 export const eodRecords = pgTable(
   'eod_record',
@@ -29,6 +29,9 @@ export const eodRecords = pgTable(
     storeId: uuid('store_id').notNull().references(() => stores.id),
     businessDate: date('business_date').notNull(),
     status: varchar('status', { length: 30 }).notNull().default('in_progress'),
+
+    // Who activated the day
+    initiatedById: uuid('initiated_by_id').references(() => staffProfile.id),
 
     // System-computed totals (populated at initEod)
     systemCashTotal: integer('system_cash_total').notNull().default(0),
@@ -56,6 +59,8 @@ export const eodRecords = pgTable(
 
     closedById: uuid('closed_by_id').references(() => staffProfile.id),
     closedAt: timestamp('closed_at', { withTimezone: true }),
+    approvedById: uuid('approved_by_id').references(() => staffProfile.id),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -67,5 +72,7 @@ export const eodRecords = pgTable(
 
 export const eodRecordsRelations = relations(eodRecords, ({ one }) => ({
   store: one(stores, { fields: [eodRecords.storeId], references: [stores.id] }),
+  initiatedBy: one(staffProfile, { fields: [eodRecords.initiatedById], references: [staffProfile.id] }),
   closedBy: one(staffProfile, { fields: [eodRecords.closedById], references: [staffProfile.id] }),
+  approvedBy: one(staffProfile, { fields: [eodRecords.approvedById], references: [staffProfile.id] }),
 }));

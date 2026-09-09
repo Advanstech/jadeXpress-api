@@ -1,10 +1,14 @@
-import { Injectable, Inject, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { eodRecords, sales, refundRequests, expenses } from '../../database/schema';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type { InitEodDto, CloseEodDto } from './dto/eod.dto';
+
+function isManager(role?: string) {
+  return ['manager', 'supervisor', 'owner', 'root'].includes((role || '').toLowerCase());
+}
 
 @Injectable()
 export class EodService {
@@ -13,7 +17,7 @@ export class EodService {
     private readonly realtime: RealtimeGateway,
   ) {}
 
-  async initEod(dto: InitEodDto) {
+  async initEod(dto: InitEodDto, initiatedById?: string) {
     // Prevent duplicate init
     const [existing] = await this.db
       .select()
@@ -22,7 +26,9 @@ export class EodService {
       .limit(1);
 
     if (existing) {
-      if (existing.status === 'completed') throw new ConflictException('EOD already closed for this date');
+      if (existing.status === 'completed' || existing.status === 'rejected') {
+        throw new ConflictException('EOD already closed for this date');
+      }
       return existing;
     }
 
@@ -68,6 +74,7 @@ export class EodService {
       storeId: dto.storeId,
       businessDate: dto.businessDate,
       status: 'in_progress',
+      initiatedById,
       systemCashTotal: Number(totals.systemCashTotal),
       systemMomoTotal: Number(totals.systemMomoTotal),
       systemCardTotal: Number(totals.systemCardTotal),
@@ -80,7 +87,7 @@ export class EodService {
     return eod;
   }
 
-  async closeEod(dto: CloseEodDto, closedById: string) {
+  async closeEod(dto: CloseEodDto, closedById: string, role?: string) {
     const [eod] = await this.db
       .select()
       .from(eodRecords)
@@ -88,16 +95,21 @@ export class EodService {
       .limit(1);
 
     if (!eod) throw new NotFoundException('EOD record not found — call /eod/init first');
-    if (eod.status === 'completed') throw new ConflictException('EOD already completed');
+    if (['completed', 'rejected'].includes(eod.status)) throw new ConflictException('EOD already finalized');
 
     const cashVariance = dto.physicalCashCount - eod.systemCashTotal - eod.openingFloat;
     const momoVariance = dto.momoConfirmed - eod.systemMomoTotal;
     const hasDiscrepancy = cashVariance !== 0 || momoVariance !== 0;
 
+    // Floor staff close → pending manager approval.
+    // Managers can close and approve immediately, but discrepancies still flag for review.
+    const manager = isManager(role);
+    const nextStatus = manager && !hasDiscrepancy ? 'completed' : 'pending_approval';
+
     const [updated] = await this.db
       .update(eodRecords)
       .set({
-        status: hasDiscrepancy ? 'discrepancy' : 'completed',
+        status: nextStatus,
         physicalCashCount: dto.physicalCashCount,
         cashVariance,
         denominations: dto.denominations,
@@ -106,6 +118,8 @@ export class EodService {
         varianceNotes: dto.varianceNotes,
         closedById,
         closedAt: new Date(),
+        approvedById: manager && !hasDiscrepancy ? closedById : null,
+        approvedAt: manager && !hasDiscrepancy ? new Date() : null,
         updatedAt: new Date(),
       })
       .where(eq(eodRecords.id, eod.id))
@@ -117,6 +131,70 @@ export class EodService {
       status: updated.status,
       cashVariance,
       momoVariance,
+    });
+
+    return updated;
+  }
+
+  async approveEod(id: string, approvedById: string) {
+    const [eod] = await this.db
+      .select()
+      .from(eodRecords)
+      .where(eq(eodRecords.id, id))
+      .limit(1);
+
+    if (!eod) throw new NotFoundException('EOD record not found');
+    if (!['pending_approval', 'discrepancy'].includes(eod.status)) {
+      throw new BadRequestException('EOD is not awaiting approval');
+    }
+
+    const [updated] = await this.db
+      .update(eodRecords)
+      .set({
+        status: 'completed',
+        approvedById,
+        approvedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(eodRecords.id, id))
+      .returning();
+
+    this.realtime.broadcastToStore(eod.storeId, 'eod:approved', {
+      eodId: updated.id,
+      businessDate: eod.businessDate,
+      status: updated.status,
+    });
+
+    return updated;
+  }
+
+  async rejectEod(id: string, rejectedById: string) {
+    const [eod] = await this.db
+      .select()
+      .from(eodRecords)
+      .where(eq(eodRecords.id, id))
+      .limit(1);
+
+    if (!eod) throw new NotFoundException('EOD record not found');
+    if (!['pending_approval', 'discrepancy'].includes(eod.status)) {
+      throw new BadRequestException('EOD is not awaiting approval');
+    }
+
+    const [updated] = await this.db
+      .update(eodRecords)
+      .set({
+        status: 'rejected',
+        approvedById: rejectedById,
+        approvedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(eodRecords.id, id))
+      .returning();
+
+    this.realtime.broadcastToStore(eod.storeId, 'eod:rejected', {
+      eodId: updated.id,
+      businessDate: eod.businessDate,
+      status: updated.status,
     });
 
     return updated;

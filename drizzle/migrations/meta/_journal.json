@@ -57,6 +57,13 @@
       "when": 1788814155681,
       "tag": "0007_organic_unus",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788951819610,
+      "tag": "0008_sloppy_mandroid",
+      "breakpoints": true
     }
   ]
 }
