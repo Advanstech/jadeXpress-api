@@ -52,6 +52,7 @@ export class AuthService {
     let staff: typeof staffProfile.$inferSelect | undefined;
 
     if (dto.staffId && dto.storeId) {
+      // First try exact staffId + storeId match
       [staff] = await this.db
         .select()
         .from(staffProfile)
@@ -62,6 +63,20 @@ export class AuthService {
           ),
         )
         .limit(1);
+
+      // If no match, check if this is a super_admin/root — they can log
+      // into any store's POS, so fall back to staffId-only lookup.
+      if (!staff) {
+        [staff] = await this.db
+          .select()
+          .from(staffProfile)
+          .where(eq(staffProfile.id, dto.staffId))
+          .limit(1);
+
+        if (staff && !['super_admin', 'root'].includes(staff.role)) {
+          staff = undefined; // Not a global admin — reject cross-store login
+        }
+      }
     } else if (dto.email) {
       [staff] = await this.db
         .select()
