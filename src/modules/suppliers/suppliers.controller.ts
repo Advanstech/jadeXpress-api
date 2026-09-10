@@ -12,6 +12,7 @@ import {
   ReceiveGoodsSchema,
   PayPurchaseOrderSchema,
   ApprovePurchaseOrderSchema,
+  UpdatePurchaseOrderItemsSchema,
 } from './dto/suppliers.dto';
 import type {
   CreateSupplierDto,
@@ -20,6 +21,7 @@ import type {
   ReceiveGoodsDto,
   PayPurchaseOrderDto,
   ApprovePurchaseOrderDto,
+  UpdatePurchaseOrderItemsDto,
 } from './dto/suppliers.dto';
 
 @ApiTags('suppliers')
@@ -65,6 +67,13 @@ export class SuppliersController {
     @Query(new ZodValidationPipe(PaginationSchema)) query: any,
   ) {
     return this.suppliersService.getSupplierInvoices(id, query);
+  }
+
+  @Delete('invoices/:id')
+  @Roles('manager', 'owner', 'supervisor')
+  @ApiOperation({ summary: 'Delete an uploaded invoice and its purchase order' })
+  deleteInvoice(@Param('id') id: string) {
+    return this.suppliersService.deleteInvoice(id);
   }
 
   @Get(':id/products')
@@ -135,6 +144,17 @@ export class SuppliersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.suppliersService.payPurchaseOrder(id, dto, user.sub);
+  }
+
+  @Put('purchase-orders/:id/items')
+  @Roles('manager', 'owner', 'supervisor')
+  @ApiOperation({ summary: 'Update line items of a purchase order (Product name, quantity, unit cost)' })
+  updatePurchaseOrderItems(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(UpdatePurchaseOrderItemsSchema)) dto: UpdatePurchaseOrderItemsDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.suppliersService.updatePurchaseOrderItems(id, dto, user.sub);
   }
 
   @Put('purchase-orders/:id/approve')

@@ -164,8 +164,11 @@ export const ledgerCategoryEnum = pgEnum('ledger_category', [
 // ─── Transfers ────────────────────────────────────────────────────────────────
 export const stockTransferStatusEnum = pgEnum('stock_transfer_status', [
   'draft',
+  'pending_approval',
+  'approved',
   'in_transit',
   'received',
+  'rejected',
   'cancelled',
 ]);
 

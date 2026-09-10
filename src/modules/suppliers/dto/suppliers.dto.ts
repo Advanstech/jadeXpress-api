@@ -74,3 +74,18 @@ export const ApprovePurchaseOrderSchema = z.object({
   })).optional(),
 });
 export type ApprovePurchaseOrderDto = z.infer<typeof ApprovePurchaseOrderSchema>;
+
+export const UpdatePurchaseOrderItemsSchema = z.object({
+  items: z.array(z.object({
+    purchaseItemId: z.string().uuid(),
+    productId: z.string().uuid(),
+    name: z.string().min(1),
+    quantityReceived: z.number().int().min(0),
+    unitCostPesewas: z.number().int().min(0),
+    sellingPricePesewas: z.number().int().min(0).optional(),
+  })).min(1),
+  invoiceTotalGhs: z.number().optional(),
+  invoiceDiscountGhs: z.number().min(0).optional(),
+  invoiceDiscountPercent: z.number().min(0).max(100).optional(),
+});
+export type UpdatePurchaseOrderItemsDto = z.infer<typeof UpdatePurchaseOrderItemsSchema>;

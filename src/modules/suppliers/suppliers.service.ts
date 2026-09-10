@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { eq, and, or, desc, sql, ilike, inArray, sum } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
@@ -18,7 +18,7 @@ import { products } from '../../database/schema/inventory';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type {
   CreateSupplierDto, UpdateSupplierDto,
-  CreatePurchaseOrderDto, ReceiveGoodsDto,
+  CreatePurchaseOrderDto, ReceiveGoodsDto, UpdatePurchaseOrderItemsDto,
   PayPurchaseOrderDto,
 } from './dto/suppliers.dto';
 import { titleCase, normalizeForCompare } from '../../common/utils/normalize';
@@ -301,6 +301,37 @@ export class SuppliersService {
     });
   }
 
+  // ── Delete Invoice ────────────────────────────────────────────────────────────
+  async deleteInvoice(id: string) {
+    return this.db.transaction(async (tx) => {
+      const [invoice] = await tx.select().from(supplierInvoices).where(eq(supplierInvoices.id, id));
+      if (!invoice) {
+        throw new NotFoundException('Invoice not found');
+      }
+
+      if (invoice.paidAmountPesewas > 0) {
+        throw new BadRequestException('Cannot delete an invoice that has been partially or fully paid');
+      }
+
+      if (invoice.purchaseOrderId) {
+        const [po] = await tx.select().from(purchaseOrders).where(eq(purchaseOrders.id, invoice.purchaseOrderId));
+        if (po && (po.status === 'received' || po.paymentStatus === 'paid' || po.paymentStatus === 'partial')) {
+          throw new BadRequestException('Cannot delete invoice because the associated purchase order has already been received or paid');
+        }
+      }
+
+      // Delete the invoice
+      await tx.delete(supplierInvoices).where(eq(supplierInvoices.id, id));
+
+      // Delete the associated purchase order (purchaseItems will be cascaded)
+      if (invoice.purchaseOrderId) {
+        await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, invoice.purchaseOrderId));
+      }
+
+      return { success: true, message: 'Invoice and associated records deleted successfully' };
+    });
+  }
+
   // ── Check if invoice number already exists (for frontend pre-check) ─────────
   async checkInvoiceNumber(invoiceNumber: string, supplierId?: string) {
     if (!invoiceNumber || invoiceNumber.trim().length === 0) {
@@ -381,6 +412,111 @@ export class SuppliersService {
       .where(eq(purchaseItems.purchaseOrderId, id));
 
     return { ...po, items };
+  }
+
+  // ── Update Purchase Order Items ───────────────────────────────────────────
+  async updatePurchaseOrderItems(id: string, dto: UpdatePurchaseOrderItemsDto, updatedById: string) {
+    const [po] = await this.db.select().from(purchaseOrders).where(eq(purchaseOrders.id, id)).limit(1);
+    if (!po) throw new NotFoundException('Purchase order not found');
+
+    const [invoice] = await this.db.select().from(supplierInvoices).where(eq(supplierInvoices.purchaseOrderId, id)).limit(1);
+
+    await this.db.transaction(async (tx) => {
+      let totalCostDiff = 0;
+      
+      for (const item of dto.items) {
+        const [poItem] = await tx.select().from(purchaseItems).where(eq(purchaseItems.id, item.purchaseItemId)).limit(1);
+        if (!poItem) continue;
+
+        const deltaQty = item.quantityReceived - poItem.quantityReceived;
+        const oldTotalCost = poItem.totalCostPesewas;
+        const newTotalCost = item.quantityReceived * item.unitCostPesewas;
+        const deltaCost = newTotalCost - oldTotalCost;
+        totalCostDiff += deltaCost;
+
+        // 1. Update purchaseItem
+        await tx.update(purchaseItems)
+          .set({
+            quantityOrdered: item.quantityReceived,
+            quantityReceived: item.quantityReceived,
+            unitCostPesewas: item.unitCostPesewas,
+            totalCostPesewas: newTotalCost,
+          })
+          .where(eq(purchaseItems.id, item.purchaseItemId));
+
+        // 2. Update Product name and selling price (globally)
+        const productUpdates: any = { name: item.name };
+        if (item.sellingPricePesewas !== undefined) {
+          productUpdates.sellingPricePesewas = item.sellingPricePesewas;
+        }
+        await tx.update(products).set(productUpdates).where(eq(products.id, item.productId));
+
+        // 3. Update stockBatches and stockItems (if quantity or cost changed)
+        if (deltaQty !== 0 || item.unitCostPesewas !== poItem.unitCostPesewas) {
+          const [batch] = await tx.select().from(stockBatches).where(and(eq(stockBatches.purchaseOrderId, id), eq(stockBatches.productId, item.productId))).limit(1);
+          if (batch) {
+             const newQtyReceived = batch.quantityReceived + deltaQty;
+             const newQtyRemaining = Math.max(0, batch.quantityRemaining + deltaQty);
+             await tx.update(stockBatches)
+               .set({
+                 quantityReceived: newQtyReceived,
+                 quantityRemaining: newQtyRemaining,
+                 costPricePesewas: item.unitCostPesewas
+               })
+               .where(eq(stockBatches.id, batch.id));
+          }
+
+          if (deltaQty !== 0) {
+            const [stockItem] = await tx.select().from(stockItems).where(and(eq(stockItems.storeId, po.storeId), eq(stockItems.productId, item.productId))).limit(1);
+            if (stockItem) {
+               await tx.update(stockItems)
+                 .set({ quantityOnHand: sql`${stockItems.quantityOnHand} + ${deltaQty}` })
+                 .where(eq(stockItems.id, stockItem.id));
+            }
+          }
+        }
+      }
+
+      // 4. Update Purchase Order Totals
+      let newPoTotal = po.totalPesewas + totalCostDiff;
+      let newDiscountGhs = 0;
+      
+      if (dto.invoiceTotalGhs !== undefined) {
+        newPoTotal = Math.round(dto.invoiceTotalGhs * 100);
+      }
+      if (dto.invoiceDiscountGhs !== undefined) {
+        newDiscountGhs = Math.round(dto.invoiceDiscountGhs * 100);
+      }
+         
+      const newPoSubtotal = po.subtotalPesewas + totalCostDiff;
+      const newBalance = Math.max(0, newPoTotal - po.paidAmountPesewas);
+      
+      await tx.update(purchaseOrders)
+        .set({
+          totalPesewas: newPoTotal,
+          subtotalPesewas: newPoSubtotal,
+          balancePesewas: newBalance,
+          paymentStatus: newBalance <= 0 ? 'paid' : (po.paidAmountPesewas > 0 ? 'partial' : 'pending'),
+          updatedAt: sql`now()`
+        })
+        .where(eq(purchaseOrders.id, id));
+
+      // 5. Update associated Supplier Invoice Totals
+      if (invoice) {
+        const newInvoiceBalance = Math.max(0, newPoTotal - invoice.paidAmountPesewas);
+        await tx.update(supplierInvoices)
+          .set({
+            totalAmountPesewas: newPoTotal,
+            balancePesewas: newInvoiceBalance,
+            discountPesewas: dto.invoiceDiscountGhs !== undefined ? newDiscountGhs : invoice.discountPesewas,
+            discountPercent: dto.invoiceDiscountPercent !== undefined ? dto.invoiceDiscountPercent : invoice.discountPercent,
+            updatedAt: sql`now()`
+          })
+          .where(eq(supplierInvoices.id, invoice.id));
+      }
+    });
+
+    return { success: true };
   }
 
   // ── Receive Goods ─────────────────────────────────────────────────────────
