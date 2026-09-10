@@ -135,6 +135,7 @@ export class InventoryService {
       ...row.product,
       category: row.category?.name ?? null,
       categoryName: row.category?.name ?? null,
+      categorySlug: row.category?.slug ?? null,
       categoryId: row.product.categoryId,
       categoryObj: row.category ?? null,
       quantity: row.stockItem?.quantityOnHand ?? 0,
