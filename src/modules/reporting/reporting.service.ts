@@ -2,14 +2,14 @@ import { Injectable, Inject } from '@nestjs/common';
 import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { sales, saleItems, products, staffProfile, categories } from '../../database/schema';
+import { normalizeDateRange } from '../../common/utils/date-range';
 
 @Injectable()
 export class ReportingService {
   constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
 
   async getSalesSummary(storeId: string, from: string, to: string) {
-    const dayStart = new Date(from);
-    const dayEnd = new Date(to);
+    const { startDate, endDate } = normalizeDateRange(from, to);
 
     const [summary] = await this.db
       .select({
@@ -23,8 +23,8 @@ export class ReportingService {
         and(
           eq(sales.storeId, storeId),
           eq(sales.status, 'completed'),
-          gte(sales.createdAt, dayStart),
-          lte(sales.createdAt, dayEnd),
+          gte(sales.createdAt, startDate),
+          lte(sales.createdAt, endDate),
         ),
       );
 
@@ -32,6 +32,7 @@ export class ReportingService {
   }
 
   async getSalesByDay(storeId: string, from: string, to: string) {
+    const { startDate, endDate } = normalizeDateRange(from, to);
     return this.db
       .select({
         date: sql<string>`date(${sales.createdAt})`,
@@ -44,8 +45,8 @@ export class ReportingService {
         and(
           eq(sales.storeId, storeId),
           eq(sales.status, 'completed'),
-          gte(sales.createdAt, new Date(from)),
-          lte(sales.createdAt, new Date(to)),
+          gte(sales.createdAt, startDate),
+          lte(sales.createdAt, endDate),
         ),
       )
       .groupBy(sql`date(${sales.createdAt})`)
@@ -53,6 +54,7 @@ export class ReportingService {
   }
 
   async getTopProducts(storeId: string, from: string, to: string, limit = 10) {
+    const { startDate, endDate } = normalizeDateRange(from, to);
     return this.db
       .select({
         productId: saleItems.productId,
@@ -67,8 +69,8 @@ export class ReportingService {
         and(
           eq(sales.storeId, storeId),
           eq(sales.status, 'completed'),
-          gte(sales.createdAt, new Date(from)),
-          lte(sales.createdAt, new Date(to)),
+          gte(sales.createdAt, startDate),
+          lte(sales.createdAt, endDate),
         ),
       )
       .groupBy(saleItems.productId, saleItems.productNameSnapshot, saleItems.productSkuSnapshot)
@@ -77,6 +79,7 @@ export class ReportingService {
   }
 
   async getPerCashierPerformance(storeId: string, from: string, to: string) {
+    const { startDate, endDate } = normalizeDateRange(from, to);
     return this.db
       .select({
         cashierId: sales.cashierId,
@@ -92,8 +95,8 @@ export class ReportingService {
         and(
           eq(sales.storeId, storeId),
           eq(sales.status, 'completed'),
-          gte(sales.createdAt, new Date(from)),
-          lte(sales.createdAt, new Date(to)),
+          gte(sales.createdAt, startDate),
+          lte(sales.createdAt, endDate),
         ),
       )
       .groupBy(sales.cashierId, staffProfile.firstName, staffProfile.lastName)
@@ -101,6 +104,7 @@ export class ReportingService {
   }
 
   async getPerCategoryPerformance(storeId: string, from: string, to: string) {
+    const { startDate, endDate } = normalizeDateRange(from, to);
     return this.db
       .select({
         categoryId: products.categoryId,
@@ -116,8 +120,8 @@ export class ReportingService {
         and(
           eq(sales.storeId, storeId),
           eq(sales.status, 'completed'),
-          gte(sales.createdAt, new Date(from)),
-          lte(sales.createdAt, new Date(to)),
+          gte(sales.createdAt, startDate),
+          lte(sales.createdAt, endDate),
         ),
       )
       .groupBy(products.categoryId, categories.name)
@@ -125,6 +129,7 @@ export class ReportingService {
   }
 
   async getHourlyHeatmap(storeId: string, from: string, to: string) {
+    const { startDate, endDate } = normalizeDateRange(from, to);
     return this.db
       .select({
         hour: sql<number>`extract(hour from ${sales.createdAt})`,
@@ -137,8 +142,8 @@ export class ReportingService {
         and(
           eq(sales.storeId, storeId),
           eq(sales.status, 'completed'),
-          gte(sales.createdAt, new Date(from)),
-          lte(sales.createdAt, new Date(to)),
+          gte(sales.createdAt, startDate),
+          lte(sales.createdAt, endDate),
         ),
       )
       .groupBy(

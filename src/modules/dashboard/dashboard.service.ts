@@ -28,6 +28,8 @@ export class DashboardService {
     const monthStart = new Date();
     monthStart.setDate(1);
     monthStart.setHours(0, 0, 0, 0);
+    const monthEnd = new Date();
+    monthEnd.setHours(23, 59, 59, 999);
 
     const [todayRevenue, monthRevenue, stockAlertCount, newCustomers, lowStockCount, totalStockCount, accountsPayable] =
       await Promise.all([
@@ -50,7 +52,7 @@ export class DashboardService {
           .from(sales)
           .where(
             and(eq(sales.storeId, storeId), eq(sales.status, 'completed'),
-              gte(sales.createdAt, monthStart)),
+              gte(sales.createdAt, monthStart), lte(sales.createdAt, monthEnd)),
           )
           .then((r) => r[0]),
 
@@ -65,7 +67,7 @@ export class DashboardService {
         this.db
           .select({ count: sql<number>`count(*)` })
           .from(customers)
-          .where(gte(customers.createdAt, monthStart))
+          .where(and(gte(customers.createdAt, monthStart), lte(customers.createdAt, monthEnd)))
           .then((r) => Number(r[0].count)),
 
         // Low stock products
@@ -156,6 +158,10 @@ export class DashboardService {
 
   async getLiveFeed(storeId: string, limit = 50) {
     const feedLimit = Math.min(Math.max(limit, 1), 100);
+    // Limit to last 30 days to avoid scanning ever-growing history tables
+    const since = new Date();
+    since.setDate(since.getDate() - 30);
+    since.setHours(0, 0, 0, 0);
 
     const recentSales = await this.db
       .select({
@@ -168,7 +174,7 @@ export class DashboardService {
       })
       .from(sales)
       .innerJoin(staffProfile, eq(staffProfile.id, sales.cashierId))
-      .where(and(eq(sales.storeId, storeId), eq(sales.status, 'completed')))
+      .where(and(eq(sales.storeId, storeId), eq(sales.status, 'completed'), gte(sales.createdAt, since)))
       .orderBy(desc(sales.createdAt))
       .limit(feedLimit);
 
@@ -186,7 +192,7 @@ export class DashboardService {
       .from(refundRequests)
       .innerJoin(sales, eq(sales.id, refundRequests.saleId))
       .leftJoin(staffProfile, eq(staffProfile.id, refundRequests.initiatedById))
-      .where(eq(refundRequests.storeId, storeId))
+      .where(and(eq(refundRequests.storeId, storeId), gte(refundRequests.createdAt, since)))
       .orderBy(desc(refundRequests.createdAt))
       .limit(feedLimit);
 
@@ -201,7 +207,7 @@ export class DashboardService {
       })
       .from(stockAlerts)
       .innerJoin(products, eq(products.id, stockAlerts.productId))
-      .where(and(eq(stockAlerts.storeId, storeId), eq(stockAlerts.isDismissed, false)))
+      .where(and(eq(stockAlerts.storeId, storeId), eq(stockAlerts.isDismissed, false), gte(stockAlerts.createdAt, since)))
       .orderBy(desc(stockAlerts.createdAt))
       .limit(feedLimit);
 
@@ -222,6 +228,7 @@ export class DashboardService {
       .where(
         and(
           eq(stockMovements.storeId, storeId),
+          gte(stockMovements.createdAt, since),
           ...stockInTypes.map((t) => eq(stockMovements.type, t as any)),
         ),
       )
@@ -282,7 +289,11 @@ export class DashboardService {
 
   async getRevenueSparkline(storeId: string, days = 14) {
     const from = new Date();
+    from.setHours(0, 0, 0, 0);
     from.setDate(from.getDate() - days);
+
+    const to = new Date();
+    to.setHours(23, 59, 59, 999);
 
     return this.db
       .select({
@@ -296,6 +307,7 @@ export class DashboardService {
           eq(sales.storeId, storeId),
           eq(sales.status, 'completed'),
           gte(sales.createdAt, from),
+          lte(sales.createdAt, to),
         ),
       )
       .groupBy(sql`date(${sales.createdAt})`)

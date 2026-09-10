@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, inArray } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
@@ -179,41 +179,70 @@ export class RefundsService {
   }
 
   private async executeRefundEffects(tx: any, refund: any, items: any[], storeId: string, performedById: string) {
-    for (const item of items.filter((i: any) => i.restockToInventory)) {
-      const [existing] = await tx
+    const restockItems = items.filter((i: any) => i.restockToInventory);
+
+    if (restockItems.length > 0) {
+      // ── Batch stock operations (eliminates N+1 inside transaction) ──────────
+      const productIds = restockItems.map((i: any) => i.productId);
+
+      // Lock all existing stock rows in one query
+      const existingStockRows = await tx
         .select()
         .from(stockItems)
-        .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, storeId)))
-        .limit(1);
+        .where(and(inArray(stockItems.productId, productIds), eq(stockItems.storeId, storeId)))
+        .for('update');
 
-      const qtyBefore = existing?.quantityOnHand ?? 0;
-      const qtyAfter = qtyBefore + item.quantity;
+      const stockMap = new Map(existingStockRows.map((s: any) => [s.productId, s]));
 
-      if (existing) {
-        await tx
-          .update(stockItems)
-          .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
-          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, storeId)));
-      } else {
-        await tx.insert(stockItems).values({
+      // Build all stock movements in memory
+      const movementInserts: any[] = [];
+      const stockUpdates: Promise<any>[] = [];
+      const stockInserts: any[] = [];
+
+      for (const item of restockItems) {
+        const existing: any = stockMap.get(item.productId);
+        const qtyBefore = existing?.quantityOnHand ?? 0;
+        const qtyAfter = qtyBefore + item.quantity;
+
+        movementInserts.push({
           productId: item.productId,
-          storeId: storeId,
-          quantityOnHand: qtyAfter,
-          lastMovementAt: new Date(),
+          storeId,
+          type: 'return_in' as const,
+          quantityChange: item.quantity,
+          quantityBefore: qtyBefore,
+          quantityAfter: qtyAfter,
+          referenceType: 'refund' as const,
+          referenceId: refund.id,
+          performedById,
         });
+
+        if (existing) {
+          stockUpdates.push(
+            tx
+              .update(stockItems)
+              .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
+              .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, storeId))),
+          );
+        } else {
+          stockInserts.push({
+            productId: item.productId,
+            storeId,
+            quantityOnHand: qtyAfter,
+            lastMovementAt: new Date(),
+          });
+        }
       }
 
-      await tx.insert(stockMovements).values({
-        productId: item.productId,
-        storeId: storeId,
-        type: 'return_in',
-        quantityChange: item.quantity,
-        quantityBefore: qtyBefore,
-        quantityAfter: qtyAfter,
-        referenceType: 'refund',
-        referenceId: refund.id,
-        performedById: performedById,
-      });
+      // Batch insert all stock movements in one query
+      await tx.insert(stockMovements).values(movementInserts);
+
+      // Batch insert new stock items
+      if (stockInserts.length > 0) {
+        await tx.insert(stockItems).values(stockInserts);
+      }
+
+      // Run all stock updates in parallel
+      await Promise.all(stockUpdates);
     }
 
     await tx.insert(ledgerEntries).values({

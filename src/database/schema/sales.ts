@@ -98,6 +98,7 @@ export const sales = pgTable(
     index('sale_cashier_idx').on(t.cashierId),
     index('sale_customer_idx').on(t.customerId),
     index('sale_store_created_idx').on(t.storeId, t.createdAt),
+    index('sale_store_status_created_idx').on(t.storeId, t.status, t.createdAt),
     index('sale_client_id_idx').on(t.clientId),
     index('sale_receipt_idx').on(t.receiptNumber),
     index('sale_status_idx').on(t.status),
@@ -120,7 +121,10 @@ export const saleItems = pgTable('sale_item', {
   productNameSnapshot: varchar('product_name_snapshot', { length: 255 }).notNull(),
   productSkuSnapshot: varchar('product_sku_snapshot', { length: 100 }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => [
+  index('sale_item_sale_idx').on(t.saleId),
+  index('sale_item_product_idx').on(t.productId),
+]);
 
 // ─── Payment ──────────────────────────────────────────────────────────────────
 // Mirrors pharma Payment — payment records are separate from sale tender for
@@ -160,7 +164,10 @@ export const refundRequests = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index('refund_sale_idx').on(t.saleId)],
+  (t) => [
+    index('refund_sale_idx').on(t.saleId),
+    index('refund_store_created_idx').on(t.storeId, t.createdAt),
+  ],
 );
 
 // ─── Refund Items ─────────────────────────────────────────────────────────────

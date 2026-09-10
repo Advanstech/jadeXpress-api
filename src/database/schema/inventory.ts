@@ -181,6 +181,7 @@ export const stockBatches = pgTable(
   (t) => [
     index('stock_batch_product_idx').on(t.productId, t.storeId),
     index('stock_batch_expiry_idx').on(t.expiryDate),
+    index('stock_batch_store_active_idx').on(t.storeId, t.isActive),
   ],
 );
 
@@ -209,6 +210,7 @@ export const stockMovements = pgTable(
     index('stock_movement_product_idx').on(t.productId, t.storeId),
     index('stock_movement_created_idx').on(t.createdAt),
     index('stock_movement_ref_idx').on(t.referenceType, t.referenceId),
+    index('stock_movement_store_created_idx').on(t.storeId, t.createdAt),
   ],
 );
 
@@ -231,7 +233,10 @@ export const stockAlerts = pgTable(
     dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index('stock_alert_product_idx').on(t.productId, t.storeId)],
+  (t) => [
+    index('stock_alert_product_idx').on(t.productId, t.storeId),
+    index('stock_alert_store_dismissed_idx').on(t.storeId, t.isDismissed),
+  ],
 );
 
 // ─── Stock Transfer (inter-store) ─────────────────────────────────────────────

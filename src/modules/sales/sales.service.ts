@@ -163,87 +163,105 @@ export class SalesService {
         });
       }
 
-      for (const item of dto.items) {
-        const [stockItem] = await tx
-          .select()
-          .from(stockItems)
-          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)))
-          .for('update')
-          .limit(1);
+      // ── Batch stock operations (eliminates N+1 inside transaction) ──────────
+      // 1. Lock all stock rows for all products in one query
+      const productIds = dto.items.map((i) => i.productId);
+      const lockedStockRows = await tx
+        .select()
+        .from(stockItems)
+        .where(and(inArray(stockItems.productId, productIds), eq(stockItems.storeId, dto.storeId)))
+        .for('update');
 
+      const stockMap = new Map(lockedStockRows.map((s) => [s.productId, s]));
+
+      // 2. Validate all stock levels upfront
+      for (const item of dto.items) {
+        const stockItem = stockMap.get(item.productId);
         if (!stockItem) {
           throw new NotFoundException(`Stock record not found for product ${item.productId}`);
         }
         if (stockItem.quantityOnHand < item.quantity) {
           throw new ConflictException(`Insufficient stock for product ${item.productId}`);
         }
+      }
 
+      // 3. Collect cost prices for all items (batch lookup for non-batch items)
+      const costPriceMap = new Map<string, number | null>();
+      const itemsWithoutBatch = dto.items.filter((i) => !i.batchId);
+      if (itemsWithoutBatch.length > 0) {
+        const noBatchProductIds = itemsWithoutBatch.map((i) => i.productId);
+        const latestBatches = await tx
+          .select({
+            productId: stockBatches.productId,
+            costPricePesewas: stockBatches.costPricePesewas,
+          })
+          .from(stockBatches)
+          .where(and(
+            inArray(stockBatches.productId, noBatchProductIds),
+            eq(stockBatches.storeId, dto.storeId),
+            eq(stockBatches.isActive, true),
+          ))
+          .orderBy(desc(stockBatches.receivedAt));
+
+        for (const b of latestBatches) {
+          if (!costPriceMap.has(b.productId)) costPriceMap.set(b.productId, b.costPricePesewas);
+        }
+      }
+
+      // 4. Update batch quantities (batch items only)
+      const batchUpdates: Promise<any>[] = [];
+      const batchCostPrices = new Map<string, number>();
+      for (const item of dto.items.filter((i) => i.batchId)) {
+        batchUpdates.push(
+          tx
+            .update(stockBatches)
+            .set({ quantityRemaining: sql`${stockBatches.quantityRemaining} - ${item.quantity}` })
+            .where(and(eq(stockBatches.id, item.batchId!), gte(stockBatches.quantityRemaining, item.quantity)))
+            .returning()
+            .then(([updatedBatch]) => {
+              if (!updatedBatch) throw new ConflictException(`Insufficient batch stock for ${item.batchId}`);
+              batchCostPrices.set(item.productId, updatedBatch.costPricePesewas);
+            }),
+        );
+      }
+      await Promise.all(batchUpdates);
+
+      // 5. Build all stock movements in memory, then insert in one query
+      const movementInserts: any[] = [];
+      for (const item of dto.items) {
+        const stockItem = stockMap.get(item.productId)!;
         const qtyBefore = stockItem.quantityOnHand;
         const qtyAfter = qtyBefore - item.quantity;
+        const costPrice = item.batchId
+          ? batchCostPrices.get(item.productId) ?? null
+          : costPriceMap.get(item.productId) ?? null;
 
-        await tx
-          .update(stockItems)
-          .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
-          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)));
-
-        await tx.insert(stockMovements).values({
+        movementInserts.push({
           productId: item.productId,
           storeId: dto.storeId,
           batchId: item.batchId,
-          type: 'sale_out',
+          type: 'sale_out' as const,
           quantityChange: -item.quantity,
           quantityBefore: qtyBefore,
           quantityAfter: qtyAfter,
-          referenceType: 'sale',
+          referenceType: 'sale' as const,
           referenceId: sale.id,
           performedById: cashierId,
+          costPricePesewas: costPrice,
         });
-
-        if (item.batchId) {
-          const [updatedBatch] = await tx
-            .update(stockBatches)
-            .set({ quantityRemaining: sql`${stockBatches.quantityRemaining} - ${item.quantity}` })
-            .where(and(eq(stockBatches.id, item.batchId), gte(stockBatches.quantityRemaining, item.quantity)))
-            .returning();
-
-          if (!updatedBatch) {
-            throw new ConflictException(`Insufficient batch stock for ${item.batchId}`);
-          }
-
-          // Record cost price on the movement for COGS calculation
-          await tx
-            .update(stockMovements)
-            .set({ costPricePesewas: updatedBatch.costPricePesewas })
-            .where(and(
-              eq(stockMovements.referenceType, 'sale'),
-              eq(stockMovements.referenceId, sale.id),
-              eq(stockMovements.productId, item.productId),
-            ));
-        } else {
-          // No batch specified — use the stock item's average cost if available
-          const [batch] = await tx
-            .select({ costPricePesewas: stockBatches.costPricePesewas })
-            .from(stockBatches)
-            .where(and(
-              eq(stockBatches.productId, item.productId),
-              eq(stockBatches.storeId, dto.storeId),
-              eq(stockBatches.isActive, true),
-            ))
-            .orderBy(desc(stockBatches.receivedAt))
-            .limit(1);
-
-          if (batch) {
-            await tx
-              .update(stockMovements)
-              .set({ costPricePesewas: batch.costPricePesewas })
-              .where(and(
-                eq(stockMovements.referenceType, 'sale'),
-                eq(stockMovements.referenceId, sale.id),
-                eq(stockMovements.productId, item.productId),
-              ));
-          }
-        }
       }
+      await tx.insert(stockMovements).values(movementInserts);
+
+      // 6. Update all stock items (one update per product — needed for per-product qty)
+      const stockUpdatePromises = dto.items.map((item) => {
+        const stockItem = stockMap.get(item.productId)!;
+        const qtyAfter = stockItem.quantityOnHand - item.quantity;
+        return tx
+          .update(stockItems)
+          .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)));
+      });
+      await Promise.all(stockUpdatePromises);
 
       await tx.insert(ledgerEntries).values({
         storeId: dto.storeId,
@@ -396,39 +414,55 @@ export class SalesService {
         .from(saleItems)
         .where(eq(saleItems.saleId, dto.saleId));
 
-      for (const item of items) {
-        const [stockItem] = await tx
-          .select()
-          .from(stockItems)
-          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, sale.storeId)))
-          .for('update')
-          .limit(1);
+      // ── Batch stock operations (eliminates N+1 inside transaction) ──────────
+      const productIds = items.map((i) => i.productId);
+      const lockedStockRows = await tx
+        .select()
+        .from(stockItems)
+        .where(and(inArray(stockItems.productId, productIds), eq(stockItems.storeId, sale.storeId)))
+        .for('update');
 
-        if (!stockItem) {
+      const stockMap = new Map(lockedStockRows.map((s) => [s.productId, s]));
+
+      // Validate all stock records exist
+      for (const item of items) {
+        if (!stockMap.has(item.productId)) {
           throw new NotFoundException(`Stock record not found for product ${item.productId}`);
         }
+      }
 
+      // Build all stock movements in memory, then insert in one query
+      const movementInserts: any[] = [];
+      for (const item of items) {
+        const stockItem = stockMap.get(item.productId)!;
         const qtyBefore = stockItem.quantityOnHand;
         const qtyAfter = qtyBefore + item.quantity;
 
-        await tx
-          .update(stockItems)
-          .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
-          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, sale.storeId)));
-
-        await tx.insert(stockMovements).values({
+        movementInserts.push({
           productId: item.productId,
           storeId: sale.storeId,
-          type: 'return_in',
+          type: 'return_in' as const,
           quantityChange: item.quantity,
           quantityBefore: qtyBefore,
           quantityAfter: qtyAfter,
-          referenceType: 'void',
+          referenceType: 'void' as const,
           referenceId: sale.id,
           performedById: staffId,
           notes: `Void: ${dto.reason}`,
         });
       }
+      await tx.insert(stockMovements).values(movementInserts);
+
+      // Update all stock items in parallel
+      const stockUpdatePromises = items.map((item) => {
+        const stockItem = stockMap.get(item.productId)!;
+        const qtyAfter = stockItem.quantityOnHand + item.quantity;
+        return tx
+          .update(stockItems)
+          .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, sale.storeId)));
+      });
+      await Promise.all(stockUpdatePromises);
 
       const [updatedSale] = await tx
         .update(sales)
@@ -467,6 +501,7 @@ export class SalesService {
       .select()
       .from(sales)
       .where(and(eq(sales.storeId, storeId), eq(sales.status, 'held')))
-      .orderBy(desc(sales.heldAt));
+      .orderBy(desc(sales.heldAt))
+      .limit(100);
   }
 }

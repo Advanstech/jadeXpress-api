@@ -3,6 +3,7 @@ import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { plSnapshots, ledgerEntries, sales, expenses, refundRequests, stockMovements } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
+import { normalizeDateRange, parseStartOfDay, parseEndOfDay } from '../../common/utils/date-range';
 
 @Injectable()
 export class AccountingService {
@@ -24,8 +25,7 @@ export class AccountingService {
   }
 
   async getAggregatedPL(storeId: string, from: string, to: string) {
-    const startDate = new Date(from);
-    const endDate = new Date(to);
+    const { startDate, endDate } = normalizeDateRange(from, to);
 
     // Live P&L aggregation from source tables so the page works even when no
     // pre-computed snapshots have been generated yet.
@@ -159,6 +159,7 @@ export class AccountingService {
   }
 
   async getCashFlow(storeId: string, from: string, to: string) {
+    const { startDate, endDate } = normalizeDateRange(from, to);
     // Cash flow counts only CASH movements. The 'cost_of_goods' category holds
     // non-cash Accounts Payable records (invoice approved / goods received) —
     // cash only moves when the supplier is actually paid (SUPPLIER_PAYMENT debit).
@@ -174,8 +175,8 @@ export class AccountingService {
         and(
           eq(ledgerEntries.storeId, storeId),
           sql`${ledgerEntries.category} <> 'cost_of_goods'`,
-          gte(ledgerEntries.entryDate, new Date(from)),
-          lte(ledgerEntries.entryDate, new Date(to)),
+          gte(ledgerEntries.entryDate, startDate),
+          lte(ledgerEntries.entryDate, endDate),
         ),
       )
       .groupBy(sql`date(${ledgerEntries.entryDate})`)
@@ -183,8 +184,7 @@ export class AccountingService {
   }
 
   async getTaxSummary(storeId: string, from: string, to: string) {
-    const startDate = new Date(from);
-    const endDate = new Date(to);
+    const { startDate, endDate } = normalizeDateRange(from, to);
 
     const [totals] = await this.db
       .select({
@@ -224,8 +224,8 @@ export class AccountingService {
     const offset = (page - 1) * limit;
 
     const conditions: any[] = [eq(ledgerEntries.storeId, storeId)];
-    if (from) conditions.push(gte(ledgerEntries.entryDate, new Date(from)));
-    if (to) conditions.push(lte(ledgerEntries.entryDate, new Date(to)));
+    if (from) conditions.push(gte(ledgerEntries.entryDate, parseStartOfDay(from)));
+    if (to) conditions.push(lte(ledgerEntries.entryDate, parseEndOfDay(to)));
     if (category) conditions.push(eq(ledgerEntries.category, category as any));
 
     const where = and(...conditions);

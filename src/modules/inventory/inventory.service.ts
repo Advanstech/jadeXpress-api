@@ -48,11 +48,11 @@ export class InventoryService {
 
   // ── Categories ────────────────────────────────────────────────────────────
   async getCategories() {
-    return this.db.select().from(categories).where(eq(categories.isActive, true)).orderBy(asc(categories.name));
+    return this.db.select().from(categories).where(eq(categories.isActive, true)).orderBy(asc(categories.name)).limit(500);
   }
 
   async getPublicCategories() {
-    return this.db.select().from(categories).where(eq(categories.isActive, true)).orderBy(asc(categories.name));
+    return this.db.select().from(categories).where(eq(categories.isActive, true)).orderBy(asc(categories.name)).limit(500);
   }
 
   async getPublicCategoryBySlug(slug: string) {
@@ -246,7 +246,8 @@ export class InventoryService {
     const rows = await this.db
       .selectDistinct({ brand: products.brand })
       .from(products)
-      .where(and(eq(products.status, 'active')));
+      .where(and(eq(products.status, 'active')))
+      .limit(500);
     return rows.map((r) => r.brand).filter((b): b is string => !!b).sort();
   }
 
@@ -471,7 +472,8 @@ export class InventoryService {
           gte(stockBatches.quantityRemaining, 1),
         ),
       )
-      .orderBy(asc(stockBatches.expiryDate));
+      .orderBy(asc(stockBatches.expiryDate))
+      .limit(500);
   }
 
   async createBatch(dto: CreateBatchDto, staffId: string) {
@@ -550,7 +552,8 @@ export class InventoryService {
       .from(stockAlerts)
       .innerJoin(products, eq(products.id, stockAlerts.productId))
       .where(and(eq(stockAlerts.storeId, storeId), eq(stockAlerts.isDismissed, false)))
-      .orderBy(desc(stockAlerts.createdAt));
+      .orderBy(desc(stockAlerts.createdAt))
+      .limit(200);
   }
 
   async dismissAlert(alertId: string, staffId: string) {
