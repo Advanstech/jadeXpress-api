@@ -57,6 +57,7 @@ export class EodService {
       .from(refundRequests)
       .where(and(
         eq(refundRequests.storeId, dto.storeId),
+        eq(refundRequests.status, 'approved'),
         gte(refundRequests.processedAt, dayStart),
         lte(refundRequests.processedAt, dayEnd),
       ));

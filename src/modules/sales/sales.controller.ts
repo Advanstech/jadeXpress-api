@@ -35,6 +35,10 @@ export class SalesController {
     @Body(new ZodValidationPipe(CreateSaleSchema)) dto: CreateSaleDto,
     @CurrentUser() user: JwtPayload,
   ) {
+    // Security: force the sale to the authenticated user's store — never trust
+    // the client-supplied storeId, otherwise a cashier could post sales to
+    // another store.
+    dto.storeId = user.storeId;
     return this.salesService.createSale(dto, user.sub);
   }
 

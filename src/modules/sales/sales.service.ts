@@ -24,6 +24,7 @@ import {
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import type { CreateSaleDto, HoldSaleDto, VoidSaleDto } from './dto/sales.dto';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 export class SalesService {
@@ -76,8 +77,9 @@ export class SalesService {
     const finalTotal = Math.max(0, total - loyaltyRedeemValue);
     const change = Math.max(0, dto.tenderedPesewas - finalTotal);
 
-    // Generate receipt number: JX-YYYYMMDD-XXXXX
-    const receiptNumber = `JX-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+    // Generate receipt number: JX-YYYYMMDD-XXXXXXXXXX
+    // Uses crypto.randomBytes for collision-resistant uniqueness (10 hex chars = 40 bits)
+    const receiptNumber = `JX-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomBytes(5).toString('hex').toUpperCase()}`;
 
     // Points earned (1 point per GHS 1 = 100 pesewas)
     const pointsEarned = dto.customerId
@@ -206,6 +208,39 @@ export class SalesService {
 
           if (!updatedBatch) {
             throw new ConflictException(`Insufficient batch stock for ${item.batchId}`);
+          }
+
+          // Record cost price on the movement for COGS calculation
+          await tx
+            .update(stockMovements)
+            .set({ costPricePesewas: updatedBatch.costPricePesewas })
+            .where(and(
+              eq(stockMovements.referenceType, 'sale'),
+              eq(stockMovements.referenceId, sale.id),
+              eq(stockMovements.productId, item.productId),
+            ));
+        } else {
+          // No batch specified — use the stock item's average cost if available
+          const [batch] = await tx
+            .select({ costPricePesewas: stockBatches.costPricePesewas })
+            .from(stockBatches)
+            .where(and(
+              eq(stockBatches.productId, item.productId),
+              eq(stockBatches.storeId, dto.storeId),
+              eq(stockBatches.isActive, true),
+            ))
+            .orderBy(desc(stockBatches.receivedAt))
+            .limit(1);
+
+          if (batch) {
+            await tx
+              .update(stockMovements)
+              .set({ costPricePesewas: batch.costPricePesewas })
+              .where(and(
+                eq(stockMovements.referenceType, 'sale'),
+                eq(stockMovements.referenceId, sale.id),
+                eq(stockMovements.productId, item.productId),
+              ));
           }
         }
       }

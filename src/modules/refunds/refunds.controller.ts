@@ -35,6 +35,8 @@ export class RefundsController {
     @Body(new ZodValidationPipe(CreateRefundSchema)) dto: CreateRefundDto,
     @CurrentUser() user: JwtPayload,
   ) {
+    // Security: force the refund to the authenticated user's store
+    dto.storeId = user.storeId;
     return this.refundsService.create(dto, user);
   }
 

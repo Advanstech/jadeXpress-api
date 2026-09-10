@@ -292,8 +292,8 @@ export class SuppliersService {
           discountPercent: dto.invoiceDiscountPercent,
           balancePesewas: invoiceTotalPesewas,
           imageUrl: dto.invoiceImageUrl,
-          ocrExtracted: true,
-          ocrConfirmed: true,
+          ocrExtracted: dto.ocrExtracted ?? false,
+          ocrConfirmed: dto.ocrExtracted ?? false,
         });
       }
 
@@ -649,7 +649,7 @@ export class SuppliersService {
 
     if (!po) throw new NotFoundException('Purchase order not found');
     if (dto.amountPesewas > po.balancePesewas && po.balancePesewas > 0) {
-      throw new Error(`Payment amount cannot exceed balance of ${po.balancePesewas}`);
+      throw new BadRequestException(`Payment amount cannot exceed balance of ${po.balancePesewas} pesewas`);
     }
 
     const newPaidAmount = po.paidAmountPesewas + dto.amountPesewas;
@@ -807,16 +807,31 @@ export class SuppliersService {
         .returning();
 
       // Ledger Entry (Record Accounts Payable / Cost of Goods)
-      await tx.insert(ledgerEntries).values({
-        storeId: po.storeId,
-        entryType: 'credit', // Liability increases
-        category: 'cost_of_goods',
-        amountPesewas: po.totalPesewas,
-        description: `Invoice Approved (AP) - PO #${po.poNumber}`,
-        referenceType: 'purchase_invoice',
-        referenceId: po.id,
-        performedById: staffId,
-      });
+      // Only create if no AP entry exists yet — receiveGoods may have already
+      // written one when the goods were auto-received by the invoice wizard.
+      const existingAp = await tx
+        .select({ id: ledgerEntries.id })
+        .from(ledgerEntries)
+        .where(
+          and(
+            eq(ledgerEntries.referenceType, 'purchase_invoice'),
+            eq(ledgerEntries.referenceId, po.id),
+          ),
+        )
+        .limit(1);
+
+      if (existingAp.length === 0) {
+        await tx.insert(ledgerEntries).values({
+          storeId: po.storeId,
+          entryType: 'credit', // Liability increases
+          category: 'cost_of_goods',
+          amountPesewas: po.totalPesewas,
+          description: `Invoice Approved (AP) - PO #${po.poNumber}`,
+          referenceType: 'purchase_invoice',
+          referenceId: po.id,
+          performedById: staffId,
+        });
+      }
 
       return { ...approved, items: updatedPoItems };
     });

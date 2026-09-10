@@ -129,7 +129,19 @@ export class RefundsService {
     }
 
     await this.db.transaction(async (tx) => {
-      await this.executeRefundEffects(tx, refundData, refundData.items, refundData.storeId, approvedById);
+      // Lock the refund row to prevent double-processing from concurrent approvals
+      const [locked] = await tx
+        .select()
+        .from(refundRequests)
+        .where(and(eq(refundRequests.id, id), eq(refundRequests.status, 'pending_approval')))
+        .for('update')
+        .limit(1);
+
+      if (!locked) {
+        throw new BadRequestException('Refund is not pending approval (already processed)');
+      }
+
+      await this.executeRefundEffects(tx, locked, refundData.items, refundData.storeId, approvedById);
       
       await tx.update(refundRequests)
         .set({ 

@@ -122,6 +122,8 @@ export class SuppliersController {
     @Body(new ZodValidationPipe(CreatePurchaseOrderSchema)) dto: CreatePurchaseOrderDto,
     @CurrentUser() user: JwtPayload,
   ) {
+    // Security: force the PO to the authenticated user's store
+    dto.storeId = user.storeId;
     return this.suppliersService.createPurchaseOrder(dto, user.sub);
   }
 

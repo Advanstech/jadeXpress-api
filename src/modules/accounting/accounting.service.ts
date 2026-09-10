@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
-import { plSnapshots, ledgerEntries, sales, expenses, refundRequests } from '../../database/schema';
+import { plSnapshots, ledgerEntries, sales, expenses, refundRequests, stockMovements } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 
 @Injectable()
@@ -51,6 +51,7 @@ export class AccountingService {
       .where(
         and(
           eq(refundRequests.storeId, storeId),
+          eq(refundRequests.status, 'approved'),
           gte(refundRequests.processedAt, startDate),
           lte(refundRequests.processedAt, endDate),
         ),
@@ -72,7 +73,26 @@ export class AccountingService {
     const revenuePesewas = Number(rev.total);
     const refundsPesewas = Number(ref.total);
     const expensesPesewas = Number(exp.total);
-    const netProfitPesewas = revenuePesewas - refundsPesewas - expensesPesewas;
+
+    // COGS for the period — sum of cost × qty for all sale_out movements
+    const [cogsAgg] = await this.db
+      .select({
+        cogs: sql<number>`coalesce(sum(${stockMovements.costPricePesewas} * abs(${stockMovements.quantityChange})), 0)`,
+      })
+      .from(stockMovements)
+      .where(
+        and(
+          eq(stockMovements.storeId, storeId),
+          eq(stockMovements.type, 'sale_out'),
+          eq(stockMovements.referenceType, 'sale'),
+          gte(stockMovements.createdAt, startDate),
+          lte(stockMovements.createdAt, endDate),
+        ),
+      );
+
+    const cogsPesewas = Number(cogsAgg.cogs);
+    const grossProfitPesewas = revenuePesewas - refundsPesewas - cogsPesewas;
+    const netProfitPesewas = grossProfitPesewas - expensesPesewas;
 
     const revenueByDay = await this.db
       .select({
@@ -99,6 +119,7 @@ export class AccountingService {
       .where(
         and(
           eq(refundRequests.storeId, storeId),
+          eq(refundRequests.status, 'approved'),
           gte(refundRequests.processedAt, startDate),
           lte(refundRequests.processedAt, endDate),
         ),
@@ -127,6 +148,8 @@ export class AccountingService {
 
     return {
       revenuePesewas,
+      cogsPesewas,
+      grossProfitPesewas,
       expensesPesewas,
       netProfitPesewas,
       refundsPesewas,
@@ -232,7 +255,7 @@ export class AccountingService {
     const [ref] = await this.db
       .select({ total: sql<number>`coalesce(sum(${refundRequests.totalAmountPesewas}), 0)` })
       .from(refundRequests)
-      .where(and(eq(refundRequests.storeId, storeId), gte(refundRequests.processedAt, dayStart), lte(refundRequests.processedAt, dayEnd)));
+      .where(and(eq(refundRequests.storeId, storeId), eq(refundRequests.status, 'approved'), gte(refundRequests.processedAt, dayStart), lte(refundRequests.processedAt, dayEnd)));
 
     const [exp] = await this.db
       .select({ total: sql<number>`coalesce(sum(${expenses.amountPesewas}), 0)` })
@@ -246,7 +269,27 @@ export class AccountingService {
     const nhilCollected = Number(rev.nhil);
     const getfundCollected = Number(rev.getfund);
     const totalExpenses = Number(exp.total);
-    const grossProfit = netRevenue; // COGS calc would require unit cost × qty — simplified here
+
+    // COGS: sum(cost_price × abs(quantity_change)) for all sale_out movements
+    // on this day. Movements without a cost price contribute 0 COGS (e.g. older
+    // sales recorded before cost tracking was added).
+    const [cogsRow] = await this.db
+      .select({
+        cogs: sql<number>`coalesce(sum(${stockMovements.costPricePesewas} * abs(${stockMovements.quantityChange})), 0)`,
+      })
+      .from(stockMovements)
+      .where(
+        and(
+          eq(stockMovements.storeId, storeId),
+          eq(stockMovements.type, 'sale_out'),
+          eq(stockMovements.referenceType, 'sale'),
+          gte(stockMovements.createdAt, dayStart),
+          lte(stockMovements.createdAt, dayEnd),
+        ),
+      );
+
+    const cogsPesewas = Number(cogsRow.cogs);
+    const grossProfit = netRevenue - cogsPesewas;
     const netProfit = grossProfit - totalExpenses;
 
     // Upsert snapshot
@@ -266,7 +309,7 @@ export class AccountingService {
       vatCollectedPesewas: vatCollected,
       nhilCollectedPesewas: nhilCollected,
       getfundCollectedPesewas: getfundCollected,
-      cogsPesewas: 0, // TODO: compute from stock movements cost data
+      cogsPesewas,
       grossProfitPesewas: grossProfit,
       totalExpensesPesewas: totalExpenses,
       netProfitPesewas: netProfit,
@@ -289,10 +332,49 @@ export class AccountingService {
 
   async exportPL(storeId: string, from: string, to: string, format: 'json' | 'csv') {
     const data = await this.getPLSnapshots(storeId, 'daily', from, to);
+
     if (format === 'csv') {
-      // TODO: proper CSV serialization — returning JSON with note for now
-      return { data, format: 'csv', note: 'CSV serialization pending — consume data array' };
+      const headers = [
+        'period_date',
+        'gross_revenue_pesewas',
+        'refunds_total_pesewas',
+        'net_revenue_pesewas',
+        'vat_collected_pesewas',
+        'nhil_collected_pesewas',
+        'getfund_collected_pesewas',
+        'cogs_pesewas',
+        'gross_profit_pesewas',
+        'total_expenses_pesewas',
+        'net_profit_pesewas',
+        'sale_count',
+      ];
+
+      const escapeCsv = (val: unknown) => {
+        const s = String(val ?? '');
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+
+      const rows = (Array.isArray(data) ? data : []).map((r: any) =>
+        [
+          r.periodDate,
+          r.grossRevenuePesewas,
+          r.refundsTotalPesewas,
+          r.netRevenuePesewas,
+          r.vatCollectedPesewas,
+          r.nhilCollectedPesewas,
+          r.getfundCollectedPesewas,
+          r.cogsPesewas,
+          r.grossProfitPesewas,
+          r.totalExpensesPesewas,
+          r.netProfitPesewas,
+          r.saleCount,
+        ].map(escapeCsv).join(','),
+      );
+
+      const csv = [headers.join(','), ...rows].join('\n');
+      return { csv, format: 'csv', filename: `pl-${storeId}-${from}-to-${to}.csv` };
     }
+
     return { data, format: 'json' };
   }
 }

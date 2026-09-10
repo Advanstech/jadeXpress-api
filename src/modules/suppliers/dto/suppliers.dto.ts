@@ -38,6 +38,9 @@ export const CreatePurchaseOrderSchema = z.object({
   invoiceDiscountGhs: z.number().min(0).optional(),
   invoiceDiscountPercent: z.number().min(0).max(100).optional(),
   invoiceImageUrl: z.string().url().optional(),
+  // Whether the invoice data was extracted via OCR (AI scan) or entered manually.
+  // Defaults to false (manual) — the wizard sets this to true when OCR is used.
+  ocrExtracted: z.boolean().default(false),
 });
 
 export const ReceiveGoodsSchema = z.object({

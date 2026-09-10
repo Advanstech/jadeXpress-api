@@ -37,6 +37,7 @@ export class EodController {
     @Body(new ZodValidationPipe(InitEodSchema)) dto: InitEodDto,
     @CurrentUser() user: JwtPayload,
   ) {
+    dto.storeId = user.storeId;
     return this.eodService.initEod(dto, user.sub);
   }
 
@@ -47,6 +48,7 @@ export class EodController {
     @Body(new ZodValidationPipe(CloseEodSchema)) dto: CloseEodDto,
     @CurrentUser() user: JwtPayload,
   ) {
+    dto.storeId = user.storeId;
     return this.eodService.closeEod(dto, user.sub, user.role);
   }
 
