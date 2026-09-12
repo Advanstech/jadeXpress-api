@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, sql, inArray } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { plSnapshots, ledgerEntries, sales, expenses, refundRequests, stockMovements } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
@@ -37,7 +37,7 @@ export class AccountingService {
       .where(
         and(
           eq(sales.storeId, storeId),
-          eq(sales.status, 'completed'),
+          inArray(sales.status, ['completed', 'partially_refunded', 'refunded']),
           gte(sales.createdAt, startDate),
           lte(sales.createdAt, endDate),
         ),
@@ -103,7 +103,7 @@ export class AccountingService {
       .where(
         and(
           eq(sales.storeId, storeId),
-          eq(sales.status, 'completed'),
+          inArray(sales.status, ['completed', 'partially_refunded', 'refunded']),
           gte(sales.createdAt, startDate),
           lte(sales.createdAt, endDate),
         ),
@@ -196,7 +196,7 @@ export class AccountingService {
       .where(
         and(
           eq(sales.storeId, storeId),
-          eq(sales.status, 'completed'),
+          inArray(sales.status, ['completed', 'partially_refunded', 'refunded']),
           gte(sales.createdAt, startDate),
           lte(sales.createdAt, endDate),
         ),
@@ -250,7 +250,7 @@ export class AccountingService {
         count: sql<number>`count(*)`,
       })
       .from(sales)
-      .where(and(eq(sales.storeId, storeId), eq(sales.status, 'completed'), gte(sales.createdAt, dayStart), lte(sales.createdAt, dayEnd)));
+      .where(and(eq(sales.storeId, storeId), inArray(sales.status, ['completed', 'partially_refunded', 'refunded']), gte(sales.createdAt, dayStart), lte(sales.createdAt, dayEnd)));
 
     const [ref] = await this.db
       .select({ total: sql<number>`coalesce(sum(${refundRequests.totalAmountPesewas}), 0)` })
@@ -376,5 +376,65 @@ export class AccountingService {
     }
 
     return { data, format: 'json' };
+  }
+
+  // ── Manual Journal Entry ────────────────────────────────────────────────────
+  // The web journal-entry modal posts free-form adjustments (chart-of-accounts
+  // style). The ledger table has no account columns — account code/name are
+  // folded into the description and the client's display category is mapped to
+  // the ledger_category enum.
+  async createManualEntry(
+    storeId: string,
+    staffId: string,
+    dto: {
+      accountCode?: string;
+      accountName?: string;
+      category?: string;
+      entryType: 'debit' | 'credit';
+      amountPesewas: number;
+      referenceType?: string;
+      reference?: string;
+      description?: string;
+    },
+  ) {
+    const categoryMap: Record<string, string> = {
+      revenue: 'revenue',
+      cogs: 'cost_of_goods',
+      'operating expenses': 'expense',
+      expense: 'expense',
+      'tax liabilities': 'tax',
+      tax: 'tax',
+      refund: 'refund',
+      'opening balance': 'opening_balance',
+    };
+    const category =
+      categoryMap[(dto.category ?? '').toLowerCase()] ?? 'adjustment';
+
+    const accountLabel = [dto.accountCode, dto.accountName]
+      .filter(Boolean)
+      .join(' - ');
+    const description = [
+      accountLabel ? `[${accountLabel}]` : null,
+      dto.description ?? `Manual ${dto.entryType} journal entry`,
+      dto.reference ? `Ref: ${dto.reference}` : null,
+    ]
+      .filter(Boolean)
+      .join(' — ');
+
+    const [entry] = await this.db
+      .insert(ledgerEntries)
+      .values({
+        storeId,
+        entryType: dto.entryType,
+        category: category as any,
+        amountPesewas: dto.amountPesewas,
+        description,
+        referenceType: dto.referenceType ?? 'MANUAL_JOURNAL',
+        referenceId: null, // client sends free-text refs — kept in description
+        performedById: staffId,
+      })
+      .returning();
+
+    return entry;
   }
 }

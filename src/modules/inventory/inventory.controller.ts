@@ -105,12 +105,8 @@ export class InventoryController {
   }
 
   // ── Batches ────────────────────────────────────────────────────────────────
-  @Get('batches/:productId')
-  @ApiOperation({ summary: 'Get all active batches for a product' })
-  getBatches(@Param('productId') productId: string, @CurrentUser() user: JwtPayload) {
-    return this.inventoryService.getBatches(productId, user.storeId);
-  }
-
+  // Static route must precede the parameterised one — otherwise "expiring"
+  // is captured as :productId and fails UUID parsing.
   @Get('batches/expiring')
   @ApiOperation({ summary: 'Get expiring batches (default ≤90 days)' })
   getExpiringBatches(
@@ -118,6 +114,12 @@ export class InventoryController {
     @Query('days') days?: string,
   ) {
     return this.inventoryService.getExpiringBatches(user.storeId, days ? parseInt(days) : 90);
+  }
+
+  @Get('batches/:productId')
+  @ApiOperation({ summary: 'Get all active batches for a product' })
+  getBatches(@Param('productId') productId: string, @CurrentUser() user: JwtPayload) {
+    return this.inventoryService.getBatches(productId, user.storeId);
   }
 
   @Post('batches')

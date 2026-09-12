@@ -94,9 +94,9 @@ export class PayrollService {
     return payslip;
   }
 
-  async updatePayslip(payslipId: string, data: any) {
+  async updatePayslip(payslipId: string, data: any, storeId?: string) {
     const existing = await this.db.query.payslips.findFirst({ where: eq(payslips.id, payslipId) });
-    if (!existing) throw new NotFoundException('Payslip not found');
+    if (!existing || (storeId && existing.storeId !== storeId)) throw new NotFoundException('Payslip not found');
 
     const cycle = await this.db.query.payrollCycles.findFirst({ where: eq(payrollCycles.id, existing.payrollCycleId) });
     if (cycle && cycle.status !== 'draft') {
@@ -113,9 +113,9 @@ export class PayrollService {
     return updated;
   }
 
-  async deletePayslip(payslipId: string) {
+  async deletePayslip(payslipId: string, storeId?: string) {
     const payslip = await this.db.query.payslips.findFirst({ where: eq(payslips.id, payslipId) });
-    if (!payslip) return;
+    if (!payslip || (storeId && payslip.storeId !== storeId)) return;
 
     const cycle = await this.db.query.payrollCycles.findFirst({ where: eq(payrollCycles.id, payslip.payrollCycleId) });
     if (cycle && cycle.status !== 'draft') {
@@ -126,8 +126,8 @@ export class PayrollService {
     await this.updateCycleTotals(payslip.payrollCycleId);
   }
 
-  async finalizeCycle(cycleId: string, processedById?: string) {
-    const cycle = await this.getCycleById(cycleId);
+  async finalizeCycle(cycleId: string, processedById?: string, storeId?: string) {
+    const cycle = await this.getCycleById(cycleId, storeId);
     if (cycle.status !== 'draft') {
       throw new BadRequestException(`Cycle is already ${cycle.status}.`);
     }
@@ -142,9 +142,9 @@ export class PayrollService {
     return updated;
   }
 
-  async markPayslipPaid(payslipId: string, data: { paymentMethod?: string; paymentReference?: string; notes?: string }) {
+  async markPayslipPaid(payslipId: string, data: { paymentMethod?: string; paymentReference?: string; notes?: string }, staffId?: string, storeId?: string) {
     const payslip = await this.db.query.payslips.findFirst({ where: eq(payslips.id, payslipId) });
-    if (!payslip) throw new NotFoundException('Payslip not found');
+    if (!payslip || (storeId && payslip.storeId !== storeId)) throw new NotFoundException('Payslip not found');
     if (payslip.status === 'paid') return payslip;
 
     const cycle = await this.db.query.payrollCycles.findFirst({ where: eq(payrollCycles.id, payslip.payrollCycleId) });
@@ -160,11 +160,25 @@ export class PayrollService {
       notes: data.notes || payslip.notes,
     }).where(eq(payslips.id, payslipId)).returning();
 
+    // Ledger entry — individual payslip payment is a cash outflow that must
+    // hit the books (markCyclePaid only ledgers payslips it marks paid itself,
+    // so there is no double count).
+    await this.db.insert(ledgerEntries).values({
+      storeId: payslip.storeId,
+      entryType: 'debit',
+      category: 'expense',
+      amountPesewas: payslip.netPayPesewas,
+      description: `Payslip payment — ${cycle ? `${cycle.periodMonth}/${cycle.periodYear}` : 'payroll'}`,
+      referenceType: 'payroll',
+      referenceId: payslipId,
+      performedById: staffId,
+    });
+
     return updated;
   }
 
-  async markCyclePaid(cycleId: string, processedById?: string) {
-    const cycle = await this.getCycleById(cycleId);
+  async markCyclePaid(cycleId: string, processedById?: string, storeId?: string) {
+    const cycle = await this.getCycleById(cycleId, storeId);
     if (cycle.status === 'paid') return cycle;
     if (cycle.status !== 'finalized') {
       throw new BadRequestException('Cycle must be finalized before marking as paid.');
@@ -183,17 +197,21 @@ export class PayrollService {
       processedById: processedById ?? cycle.processedById,
     }).where(eq(payrollCycles.id, cycleId)).returning();
 
-    // Create ledger entry for the total net pay (cash outflow)
-    await this.db.insert(ledgerEntries).values({
-      storeId: cycle.storeId,
-      entryType: 'debit',
-      category: 'expense',
-      amountPesewas: cycle.totalNetPesewas,
-      description: `Payroll payment for ${cycle.periodMonth}/${cycle.periodYear}`,
-      referenceType: 'payroll',
-      referenceId: cycleId,
-      performedById: processedById ?? cycle.processedById,
-    });
+    // Ledger entry for the payslips paid in THIS call — payslips already paid
+    // individually wrote their own entries in markPayslipPaid.
+    const paidNowTotal = unpaidPayslips.reduce((sum: number, p: any) => sum + p.netPayPesewas, 0);
+    if (paidNowTotal > 0) {
+      await this.db.insert(ledgerEntries).values({
+        storeId: cycle.storeId,
+        entryType: 'debit',
+        category: 'expense',
+        amountPesewas: paidNowTotal,
+        description: `Payroll payment for ${cycle.periodMonth}/${cycle.periodYear}`,
+        referenceType: 'payroll',
+        referenceId: cycleId,
+        performedById: processedById ?? cycle.processedById,
+      });
+    }
 
     return updated;
   }

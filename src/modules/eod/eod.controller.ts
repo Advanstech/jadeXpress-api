@@ -56,13 +56,13 @@ export class EodController {
   @Roles('manager', 'supervisor', 'owner')
   @ApiOperation({ summary: 'Approve a pending or discrepancy EOD' })
   approveEod(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.eodService.approveEod(id, user.sub);
+    return this.eodService.approveEod(id, user.sub, user.storeId);
   }
 
   @Post(':id/reject')
   @Roles('manager', 'supervisor', 'owner')
   @ApiOperation({ summary: 'Reject a pending or discrepancy EOD' })
   rejectEod(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.eodService.rejectEod(id, user.sub);
+    return this.eodService.rejectEod(id, user.sub, user.storeId);
   }
 }

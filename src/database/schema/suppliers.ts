@@ -15,6 +15,7 @@ import {
   date,
   jsonb,
   index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import {
@@ -108,7 +109,8 @@ export const purchaseItems = pgTable('purchase_item', {
 // ─── Supplier Invoice ─────────────────────────────────────────────────────────
 export const supplierInvoices = pgTable('invoice', {
   id: uuid('id').defaultRandom().primaryKey(),
-  invoiceNumber: varchar('invoice_number', { length: 100 }).notNull().unique(),
+  // Unique per supplier — different suppliers can reuse the same number
+  invoiceNumber: varchar('invoice_number', { length: 100 }).notNull(),
   supplierId: uuid('supplier_id').notNull().references(() => suppliers.id),
   purchaseOrderId: uuid('purchase_order_id').references(() => purchaseOrders.id),
   issuedDate: date('issued_date').notNull(),
@@ -124,7 +126,9 @@ export const supplierInvoices = pgTable('invoice', {
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => [
+  uniqueIndex('invoice_supplier_number_unique').on(t.supplierId, t.invoiceNumber),
+]);
 
 // ─── Invoice Payment ──────────────────────────────────────────────────────────
 export const invoicePayments = pgTable('invoice_payment', {

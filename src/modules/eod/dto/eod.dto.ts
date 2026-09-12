@@ -9,6 +9,7 @@ const DenominationSchema = z.object({
 export const InitEodSchema = z.object({
   storeId: z.string().uuid(),
   businessDate: z.string().date(),
+  openingFloat: z.number().int().min(0).optional(),
 });
 
 export const CloseEodSchema = z.object({

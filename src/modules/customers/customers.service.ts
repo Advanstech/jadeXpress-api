@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq, ilike, or, desc, sql, and, lte } from 'drizzle-orm';
+import { eq, ilike, or, desc, sql, and, lte, inArray } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { customers, loyaltyTransactions, sales, saleItems } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
@@ -74,7 +74,7 @@ export class CustomersService {
     return this.db
       .select()
       .from(sales)
-      .where(and(eq(sales.customerId, customerId), eq(sales.status, 'completed')))
+      .where(and(eq(sales.customerId, customerId), inArray(sales.status, ['completed', 'partially_refunded'])))
       .orderBy(desc(sales.completedAt))
       .limit(limit);
   }

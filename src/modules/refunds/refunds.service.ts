@@ -36,11 +36,13 @@ export class RefundsService {
     return paginate(data, Number(count), page, limit);
   }
 
-  async getById(id: string) {
+  async getById(id: string, storeId?: string) {
+    const conditions = [eq(refundRequests.id, id)];
+    if (storeId) conditions.push(eq(refundRequests.storeId, storeId));
     const [refund] = await this.db
       .select()
       .from(refundRequests)
-      .where(eq(refundRequests.id, id))
+      .where(and(...conditions))
       .limit(1);
     if (!refund) throw new NotFoundException('Refund not found');
 
@@ -53,11 +55,6 @@ export class RefundsService {
   }
 
   async create(dto: CreateRefundDto, user: JwtPayload) {
-    const totalAmountPesewas = dto.items.reduce(
-      (sum, i) => sum + i.unitPricePesewas * i.quantity,
-      0,
-    );
-    
     const initiatedById = user.sub;
     const isManager = ['manager', 'owner', 'supervisor', 'root'].includes(user.role);
     // Only manager-level users can authorize a refund on the spot.
@@ -67,6 +64,59 @@ export class RefundsService {
     const authorizedById = canAutoApprove ? (dto.authorizedById || initiatedById) : null;
 
     const createdRefund = await this.db.transaction(async (tx) => {
+      // ── Validate the sale (server-side, never trust client payload) ────────
+      const [sale] = await tx
+        .select()
+        .from(sales)
+        .where(eq(sales.id, dto.saleId))
+        .for('update')
+        .limit(1);
+
+      if (!sale || sale.storeId !== dto.storeId) {
+        throw new NotFoundException('Sale not found');
+      }
+      if (!['completed', 'partially_refunded'].includes(sale.status)) {
+        throw new BadRequestException(`Sale is not refundable (status: ${sale.status})`);
+      }
+
+      const saleItemRows = await tx
+        .select()
+        .from(saleItems)
+        .where(eq(saleItems.saleId, sale.id));
+      const saleItemMap = new Map(saleItemRows.map((si) => [si.id, si]));
+
+      // Quantities already refunded (approved or pending) per sale item
+      const priorRefunded = await tx
+        .select({
+          saleItemId: refundItems.saleItemId,
+          qty: sql<number>`coalesce(sum(${refundItems.quantity}), 0)::int`,
+        })
+        .from(refundItems)
+        .innerJoin(refundRequests, eq(refundItems.refundRequestId, refundRequests.id))
+        .where(and(eq(refundRequests.saleId, sale.id), sql`${refundRequests.status}::text <> 'rejected'`))
+        .groupBy(refundItems.saleItemId);
+      const priorQtyMap = new Map(priorRefunded.map((r) => [r.saleItemId, Number(r.qty)]));
+
+      // Validate every requested line against the actual sale items and use
+      // the server-side price — client-supplied unitPricePesewas is ignored.
+      const validatedItems = dto.items.map((i) => {
+        const si = saleItemMap.get(i.saleItemId);
+        if (!si || si.productId !== i.productId) {
+          throw new BadRequestException('Refund item does not belong to this sale');
+        }
+        const remaining = si.quantity - (priorQtyMap.get(si.id) ?? 0);
+        if (i.quantity <= 0 || i.quantity > remaining) {
+          throw new BadRequestException(`Refund quantity for an item exceeds the refundable amount (${remaining} left)`);
+        }
+        const unitPricePesewas = Math.round(si.lineTotalPesewas / si.quantity);
+        return { ...i, unitPricePesewas };
+      });
+
+      const totalAmountPesewas = validatedItems.reduce(
+        (sum, i) => sum + i.unitPricePesewas * i.quantity,
+        0,
+      );
+
       const [refund] = await tx.insert(refundRequests).values({
         saleId: dto.saleId,
         storeId: dto.storeId,
@@ -82,7 +132,7 @@ export class RefundsService {
       }).returning();
 
       await tx.insert(refundItems).values(
-        dto.items.map((i) => ({
+        validatedItems.map((i) => ({
           refundRequestId: refund.id,
           saleItemId: i.saleItemId,
           productId: i.productId,
@@ -94,7 +144,7 @@ export class RefundsService {
       );
 
       if (status === 'approved') {
-        await this.executeRefundEffects(tx, refund, dto.items, dto.storeId, initiatedById);
+        await this.executeRefundEffects(tx, refund, validatedItems, dto.storeId, initiatedById);
       }
 
       await tx.insert(auditLogs).values({
@@ -122,18 +172,20 @@ export class RefundsService {
     return result;
   }
 
-  async approve(id: string, approvedById: string) {
-    const refundData = await this.getById(id);
+  async approve(id: string, approvedById: string, storeId?: string) {
+    const refundData = await this.getById(id, storeId);
     if (refundData.status !== 'pending_approval') {
       throw new BadRequestException('Refund is not pending approval');
     }
 
     await this.db.transaction(async (tx) => {
       // Lock the refund row to prevent double-processing from concurrent approvals
+      const conditions = [eq(refundRequests.id, id), eq(refundRequests.status, 'pending_approval')];
+      if (storeId) conditions.push(eq(refundRequests.storeId, storeId));
       const [locked] = await tx
         .select()
         .from(refundRequests)
-        .where(and(eq(refundRequests.id, id), eq(refundRequests.status, 'pending_approval')))
+        .where(and(...conditions))
         .for('update')
         .limit(1);
 
@@ -149,7 +201,7 @@ export class RefundsService {
           authorizedById: approvedById,
           processedAt: new Date()
         })
-        .where(eq(refundRequests.id, id));
+        .where(eq(refundRequests.id, locked.id));
     });
 
     this.realtime.broadcastToStore(refundData.storeId, 'refund:completed', {
@@ -161,8 +213,8 @@ export class RefundsService {
     return this.getById(id);
   }
 
-  async reject(id: string, rejectedById: string) {
-    const refundData = await this.getById(id);
+  async reject(id: string, rejectedById: string, storeId?: string) {
+    const refundData = await this.getById(id, storeId);
     if (refundData.status !== 'pending_approval') {
       throw new BadRequestException('Refund is not pending approval');
     }
@@ -173,9 +225,14 @@ export class RefundsService {
         authorizedById: rejectedById,
         processedAt: new Date()
       })
-      .where(eq(refundRequests.id, id));
+      .where(
+        and(
+          eq(refundRequests.id, id),
+          eq(refundRequests.status, 'pending_approval'),
+        ),
+      );
 
-    return this.getById(id);
+    return this.getById(id, storeId);
   }
 
   private async executeRefundEffects(tx: any, refund: any, items: any[], storeId: string, performedById: string) {
@@ -261,11 +318,20 @@ export class RefundsService {
       .from(saleItems)
       .where(eq(saleItems.saleId, refund.saleId));
 
-    const refundedQtyBySaleItem = items.reduce((acc: Record<string, number>, i: any) => {
-      acc[i.saleItemId] = (acc[i.saleItemId] || 0) + i.quantity;
-      return acc;
-    }, {} as Record<string, number>);
-    const fullyRefunded = allSaleItems.every((si: any) => (refundedQtyBySaleItem[si.id] || 0) >= si.quantity);
+    // Cumulative refunded quantities across ALL non-rejected refunds for this
+    // sale — a second partial refund must count toward full-refund status.
+    const cumulative = await tx
+      .select({
+        saleItemId: refundItems.saleItemId,
+        qty: sql<number>`coalesce(sum(${refundItems.quantity}), 0)::int`,
+      })
+      .from(refundItems)
+      .innerJoin(refundRequests, eq(refundItems.refundRequestId, refundRequests.id))
+      .where(and(eq(refundRequests.saleId, refund.saleId), sql`${refundRequests.status}::text <> 'rejected'`))
+      .groupBy(refundItems.saleItemId);
+    const cumulativeMap = new Map(cumulative.map((r: any) => [r.saleItemId, Number(r.qty)]));
+
+    const fullyRefunded = allSaleItems.every((si: any) => (cumulativeMap.get(si.id) ?? 0) >= si.quantity);
 
     await tx
       .update(sales)

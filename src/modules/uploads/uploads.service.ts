@@ -39,12 +39,38 @@ export class UploadsService {
       }
     }
 
-    // Compress with sharp: max 800px, JPEG quality 85
     const buffer = Buffer.from(rawBase64, 'base64');
-    const compressed = await sharp(buffer)
-      .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 85 })
-      .toBuffer();
+
+    // PDFs (scanned invoices) can't go through sharp — upload raw.
+    if (mimeType === 'application/pdf') {
+      if (this.cloudinaryConfigured) {
+        try {
+          const result = await cloudinary.uploader.upload(
+            `data:application/pdf;base64,${rawBase64}`,
+            { folder: `jadexpress/${folder}`, resource_type: 'auto' },
+          );
+          return { url: result.secure_url, provider: 'cloudinary' };
+        } catch (err: any) {
+          console.warn('[UPLOADS] Cloudinary PDF upload failed:', err?.message);
+        }
+      }
+      return { url: `data:application/pdf;base64,${rawBase64}`, provider: 'local-base64' };
+    }
+
+    if (!mimeType.startsWith('image/')) {
+      throw new BadRequestException(`Unsupported file type: ${mimeType}`);
+    }
+
+    // Compress with sharp: max 800px, JPEG quality 85
+    let compressed: Buffer;
+    try {
+      compressed = await sharp(buffer)
+        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+    } catch {
+      throw new BadRequestException('File is not a valid image');
+    }
 
     if (this.cloudinaryConfigured) {
       try {

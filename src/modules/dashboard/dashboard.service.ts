@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, sql, inArray } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
   sales,
@@ -41,7 +41,7 @@ export class DashboardService {
           })
           .from(sales)
           .where(
-            and(eq(sales.storeId, storeId), eq(sales.status, 'completed'),
+            and(eq(sales.storeId, storeId), inArray(sales.status, ['completed', 'partially_refunded']),
               gte(sales.createdAt, todayStart), lte(sales.createdAt, todayEnd)),
           )
           .then((r) => r[0]),
@@ -51,7 +51,7 @@ export class DashboardService {
           .select({ total: sql<number>`coalesce(sum(${sales.totalPesewas}), 0)` })
           .from(sales)
           .where(
-            and(eq(sales.storeId, storeId), eq(sales.status, 'completed'),
+            and(eq(sales.storeId, storeId), inArray(sales.status, ['completed', 'partially_refunded']),
               gte(sales.createdAt, monthStart), lte(sales.createdAt, monthEnd)),
           )
           .then((r) => r[0]),
@@ -119,7 +119,7 @@ export class DashboardService {
       .select({ total: sql<number>`coalesce(sum(${sales.totalPesewas}), 0)` })
       .from(sales)
       .where(
-        and(eq(sales.storeId, storeId), eq(sales.status, 'completed'),
+        and(eq(sales.storeId, storeId), inArray(sales.status, ['completed', 'partially_refunded']),
           gte(sales.createdAt, lastWeek), lte(sales.createdAt, lastWeekEnd)),
       );
 
@@ -174,7 +174,7 @@ export class DashboardService {
       })
       .from(sales)
       .innerJoin(staffProfile, eq(staffProfile.id, sales.cashierId))
-      .where(and(eq(sales.storeId, storeId), eq(sales.status, 'completed'), gte(sales.createdAt, since)))
+      .where(and(eq(sales.storeId, storeId), inArray(sales.status, ['completed', 'partially_refunded']), gte(sales.createdAt, since)))
       .orderBy(desc(sales.createdAt))
       .limit(feedLimit);
 
@@ -305,7 +305,7 @@ export class DashboardService {
       .where(
         and(
           eq(sales.storeId, storeId),
-          eq(sales.status, 'completed'),
+          inArray(sales.status, ['completed', 'partially_refunded']),
           gte(sales.createdAt, from),
           lte(sales.createdAt, to),
         ),

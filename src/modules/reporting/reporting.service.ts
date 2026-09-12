@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, sql, inArray } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { sales, saleItems, products, staffProfile, categories } from '../../database/schema';
 import { normalizeDateRange } from '../../common/utils/date-range';
@@ -22,7 +22,7 @@ export class ReportingService {
       .where(
         and(
           eq(sales.storeId, storeId),
-          eq(sales.status, 'completed'),
+          inArray(sales.status, ['completed', 'partially_refunded']),
           gte(sales.createdAt, startDate),
           lte(sales.createdAt, endDate),
         ),
@@ -44,7 +44,7 @@ export class ReportingService {
       .where(
         and(
           eq(sales.storeId, storeId),
-          eq(sales.status, 'completed'),
+          inArray(sales.status, ['completed', 'partially_refunded']),
           gte(sales.createdAt, startDate),
           lte(sales.createdAt, endDate),
         ),
@@ -68,7 +68,7 @@ export class ReportingService {
       .where(
         and(
           eq(sales.storeId, storeId),
-          eq(sales.status, 'completed'),
+          inArray(sales.status, ['completed', 'partially_refunded']),
           gte(sales.createdAt, startDate),
           lte(sales.createdAt, endDate),
         ),
@@ -94,7 +94,7 @@ export class ReportingService {
       .where(
         and(
           eq(sales.storeId, storeId),
-          eq(sales.status, 'completed'),
+          inArray(sales.status, ['completed', 'partially_refunded']),
           gte(sales.createdAt, startDate),
           lte(sales.createdAt, endDate),
         ),
@@ -119,7 +119,7 @@ export class ReportingService {
       .where(
         and(
           eq(sales.storeId, storeId),
-          eq(sales.status, 'completed'),
+          inArray(sales.status, ['completed', 'partially_refunded']),
           gte(sales.createdAt, startDate),
           lte(sales.createdAt, endDate),
         ),
@@ -141,7 +141,7 @@ export class ReportingService {
       .where(
         and(
           eq(sales.storeId, storeId),
-          eq(sales.status, 'completed'),
+          inArray(sales.status, ['completed', 'partially_refunded']),
           gte(sales.createdAt, startDate),
           lte(sales.createdAt, endDate),
         ),

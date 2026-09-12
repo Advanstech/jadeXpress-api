@@ -50,6 +50,20 @@ const safeSelect = {
   updatedAt: staffProfile.updatedAt,
 };
 
+// Minimal roster select for the PUBLIC PIN-login picker — no PII beyond what
+// the login screen needs to render staff cards and resolve an email lookup.
+const rosterSelect = {
+  id: staffProfile.id,
+  storeId: staffProfile.storeId,
+  firstName: staffProfile.firstName,
+  lastName: staffProfile.lastName,
+  email: staffProfile.email,
+  role: staffProfile.role,
+  avatarUrl: staffProfile.avatarUrl,
+  requiresPinChange: staffProfile.requiresPinChange,
+  requiresPasswordChange: staffProfile.requiresPasswordChange,
+};
+
 @Injectable()
 export class StaffService {
   constructor(
@@ -80,7 +94,7 @@ export class StaffService {
     if (!targetStoreId) return [];
 
     return this.db
-      .select(safeSelect)
+      .select(rosterSelect)
       .from(staffProfile)
       .where(
         and(
@@ -92,11 +106,13 @@ export class StaffService {
       .orderBy(staffProfile.firstName);
   }
 
-  async getById(id: string) {
+  async getById(id: string, storeId?: string) {
+    const conditions = [eq(staffProfile.id, id)];
+    if (storeId) conditions.push(eq(staffProfile.storeId, storeId));
     const [staff] = await this.db
       .select(safeSelect)
       .from(staffProfile)
-      .where(eq(staffProfile.id, id))
+      .where(and(...conditions))
       .limit(1);
     if (!staff) throw new NotFoundException('Staff member not found');
     return staff;
@@ -144,31 +160,37 @@ export class StaffService {
     return staff;
   }
 
-  async update(id: string, dto: UpdateStaffDto) {
+  async update(id: string, dto: UpdateStaffDto, storeId?: string) {
+    const conditions = [eq(staffProfile.id, id)];
+    if (storeId) conditions.push(eq(staffProfile.storeId, storeId));
     const [staff] = await this.db
       .update(staffProfile)
       .set({ ...dto, updatedAt: new Date() })
-      .where(eq(staffProfile.id, id))
+      .where(and(...conditions))
       .returning(safeSelect);
     if (!staff) throw new NotFoundException('Staff member not found');
     return staff;
   }
 
-  async deactivate(id: string) {
+  async deactivate(id: string, storeId?: string) {
+    const conditions = [eq(staffProfile.id, id)];
+    if (storeId) conditions.push(eq(staffProfile.storeId, storeId));
     const [staff] = await this.db
       .update(staffProfile)
       .set({ isActive: false, updatedAt: new Date() })
-      .where(eq(staffProfile.id, id))
+      .where(and(...conditions))
       .returning(safeSelect);
     if (!staff) throw new NotFoundException('Staff member not found');
     return staff;
   }
 
-  async delete(id: string, reassignedToId?: string) {
+  async delete(id: string, reassignedToId?: string, storeId?: string) {
+    const conditions = [eq(staffProfile.id, id)];
+    if (storeId) conditions.push(eq(staffProfile.storeId, storeId));
     const [staff] = await this.db
       .select(safeSelect)
       .from(staffProfile)
-      .where(eq(staffProfile.id, id))
+      .where(and(...conditions))
       .limit(1);
     if (!staff) throw new NotFoundException('Staff member not found');
 
@@ -234,8 +256,10 @@ export class StaffService {
     return { success: true, message: 'Staff member deleted' };
   }
 
-  async generateTemporaryPin(id: string) {
-    const [staff] = await this.db.select().from(staffProfile).where(eq(staffProfile.id, id)).limit(1);
+  async generateTemporaryPin(id: string, storeId?: string) {
+    const conditions = [eq(staffProfile.id, id)];
+    if (storeId) conditions.push(eq(staffProfile.storeId, storeId));
+    const [staff] = await this.db.select().from(staffProfile).where(and(...conditions)).limit(1);
     if (!staff) throw new NotFoundException('Staff member not found');
 
     const rawPin = Math.floor(1000 + Math.random() * 9000).toString().trim(); // 4 digits
@@ -255,8 +279,18 @@ export class StaffService {
     return { success: true, temporaryPin: rawPin };
   }
 
-  async getActivities(id: string) {
+  async getActivities(id: string, storeId?: string) {
     const { auditLogs } = await import('../../database/schema');
+
+    // Verify the staff member belongs to the caller's store
+    const staffConditions = [eq(staffProfile.id, id)];
+    if (storeId) staffConditions.push(eq(staffProfile.storeId, storeId));
+    const [staffMember] = await this.db
+      .select({ id: staffProfile.id })
+      .from(staffProfile)
+      .where(and(...staffConditions))
+      .limit(1);
+    if (!staffMember) throw new NotFoundException('Staff member not found');
 
     // Fetch audit logs for this staff member
     const logs = await this.db
@@ -355,8 +389,10 @@ export class StaffService {
     return paginate(sanitizedData, Number(count), page, limit);
   }
 
-  async resendCredentials(id: string) {
-    const [staff] = await this.db.select().from(staffProfile).where(eq(staffProfile.id, id)).limit(1);
+  async resendCredentials(id: string, storeId?: string) {
+    const conditions = [eq(staffProfile.id, id)];
+    if (storeId) conditions.push(eq(staffProfile.storeId, storeId));
+    const [staff] = await this.db.select().from(staffProfile).where(and(...conditions)).limit(1);
     if (!staff) throw new NotFoundException('Staff member not found');
     if (!staff.email) throw new NotFoundException('Staff member has no email address on record');
 
@@ -440,11 +476,13 @@ export class StaffService {
     return shift ?? null;
   }
 
-  async getShiftHistory(staffId: string, limit = 20) {
+  async getShiftHistory(staffId: string, limit = 20, storeId?: string) {
+    const conditions = [eq(shiftReconciliation.staffId, staffId)];
+    if (storeId) conditions.push(eq(shiftReconciliation.storeId, storeId));
     return this.db
       .select()
       .from(shiftReconciliation)
-      .where(eq(shiftReconciliation.staffId, staffId))
+      .where(and(...conditions))
       .orderBy(desc(shiftReconciliation.clockIn))
       .limit(limit);
   }

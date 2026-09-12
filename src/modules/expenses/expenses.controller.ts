@@ -33,7 +33,12 @@ export class ExpensesController {
   @Post('categories')
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Create custom expense category' })
-  createCategory(@Body(new ZodValidationPipe(CreateExpenseCategorySchema)) dto: CreateExpenseCategoryDto) {
+  createCategory(
+    @Body(new ZodValidationPipe(CreateExpenseCategorySchema)) dto: CreateExpenseCategoryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    // Security: categories are created in the caller's store
+    dto.storeId = user.storeId;
     return this.expensesService.createCategory(dto);
   }
 
@@ -58,8 +63,8 @@ export class ExpensesController {
   }
 
   @Get(':id')
-  getById(@Param('id') id: string) {
-    return this.expensesService.getById(id);
+  getById(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.expensesService.getById(id, user.storeId);
   }
 
   @Post()
@@ -68,6 +73,8 @@ export class ExpensesController {
     @Body(new ZodValidationPipe(CreateExpenseSchema)) dto: CreateExpenseDto,
     @CurrentUser() user: JwtPayload,
   ) {
+    // Security: expenses are recorded against the caller's store only
+    dto.storeId = user.storeId;
     return this.expensesService.create(dto, user.sub);
   }
 
@@ -76,14 +83,15 @@ export class ExpensesController {
   update(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(UpdateExpenseSchema)) dto: UpdateExpenseDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.expensesService.update(id, dto);
+    return this.expensesService.update(id, dto, user.storeId);
   }
 
   @Patch(':id/approve')
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Approve expense (manager sign-off)' })
   approve(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.expensesService.approve(id, user.sub);
+    return this.expensesService.approve(id, user.sub, user.storeId);
   }
 }

@@ -1,56 +1,75 @@
-import { Controller, Get, Post, Body, Param, Patch, Delete, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Patch, Delete } from '@nestjs/common';
 import { PayrollService } from './payroll.service';
+import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 
 @Controller('payroll')
 export class PayrollController {
   constructor(private readonly payrollService: PayrollService) {}
 
   @Get('cycles')
-  getCycles(@Query('storeId') storeId: string) {
-    if (!storeId) throw new Error('storeId is required');
-    return this.payrollService.getCycles(storeId);
+  getCycles(@CurrentUser() user: JwtPayload) {
+    return this.payrollService.getCycles(user.storeId);
   }
 
   @Post('cycles')
-  createCycle(@Body() body: { storeId: string; periodMonth: number; periodYear: number; processedById?: string }) {
-    return this.payrollService.createCycle(body.storeId, body);
+  @Roles('manager', 'owner')
+  createCycle(
+    @Body() body: { periodMonth: number; periodYear: number },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.payrollService.createCycle(user.storeId, {
+      ...body,
+      processedById: user.sub,
+    });
   }
 
   @Get('cycles/:id')
-  getCycleById(@Param('id') id: string, @Query('storeId') storeId?: string) {
-    return this.payrollService.getCycleById(id, storeId);
+  getCycleById(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.payrollService.getCycleById(id, user.storeId);
   }
 
   @Post('cycles/:id/finalize')
-  finalizeCycle(@Param('id') id: string, @Body() body?: { processedById?: string }) {
-    return this.payrollService.finalizeCycle(id, body?.processedById);
+  @Roles('manager', 'owner')
+  finalizeCycle(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.payrollService.finalizeCycle(id, user.sub, user.storeId);
   }
 
   @Post('cycles/:id/pay')
-  markCyclePaid(@Param('id') id: string, @Body() body?: { processedById?: string }) {
-    return this.payrollService.markCyclePaid(id, body?.processedById);
+  @Roles('manager', 'owner')
+  markCyclePaid(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.payrollService.markCyclePaid(id, user.sub, user.storeId);
   }
 
   @Post('payslips')
-  createPayslip(@Body() body: { cycleId: string; payslipData: any }) {
-    return this.payrollService.createPayslip(body.cycleId, body.payslipData);
+  @Roles('manager', 'owner')
+  createPayslip(@Body() body: { cycleId: string; payslipData: any }, @CurrentUser() user: JwtPayload) {
+    // Security: payslips are created in the caller's store only
+    return this.payrollService.createPayslip(body.cycleId, {
+      ...body.payslipData,
+      storeId: user.storeId,
+    });
   }
 
   @Patch('payslips/:id')
-  updatePayslip(@Param('id') id: string, @Body() body: any) {
-    return this.payrollService.updatePayslip(id, body);
+  @Roles('manager', 'owner')
+  updatePayslip(@Param('id') id: string, @Body() body: any, @CurrentUser() user: JwtPayload) {
+    return this.payrollService.updatePayslip(id, body, user.storeId);
   }
 
   @Delete('payslips/:id')
-  deletePayslip(@Param('id') id: string) {
-    return this.payrollService.deletePayslip(id);
+  @Roles('manager', 'owner')
+  deletePayslip(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.payrollService.deletePayslip(id, user.storeId);
   }
 
   @Post('payslips/:id/pay')
+  @Roles('manager', 'owner')
   markPayslipPaid(
     @Param('id') id: string,
-    @Body() body?: { paymentMethod?: string; paymentReference?: string; notes?: string },
+    @Body() body: { paymentMethod?: string; paymentReference?: string; notes?: string } | undefined,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.payrollService.markPayslipPaid(id, body ?? {});
+    return this.payrollService.markPayslipPaid(id, body ?? {}, user.sub, user.storeId);
   }
 }

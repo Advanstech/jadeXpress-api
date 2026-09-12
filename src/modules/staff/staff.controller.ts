@@ -42,21 +42,26 @@ export class StaffController {
 
   @Get(':id')
   @Roles('manager', 'supervisor', 'owner')
-  getById(@Param('id') id: string) {
-    return this.staffService.getById(id);
+  getById(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.staffService.getById(id, user.storeId);
   }
 
   @Get(':id/shifts')
   @Roles('manager', 'supervisor', 'owner')
   @ApiOperation({ summary: 'Shift history for a staff member' })
-  getShiftHistory(@Param('id') id: string) {
-    return this.staffService.getShiftHistory(id);
+  getShiftHistory(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.staffService.getShiftHistory(id, 20, user.storeId);
   }
 
   @Post()
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Onboard new staff member' })
-  create(@Body(new ZodValidationPipe(CreateStaffSchema)) dto: CreateStaffDto) {
+  create(
+    @Body(new ZodValidationPipe(CreateStaffSchema)) dto: CreateStaffDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    // Security: staff can only be created in the authenticated user's store
+    dto.storeId = user.storeId;
     return this.staffService.create(dto);
   }
 
@@ -65,36 +70,37 @@ export class StaffController {
   update(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(UpdateStaffSchema)) dto: UpdateStaffDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.staffService.update(id, dto);
+    return this.staffService.update(id, dto, user.storeId);
   }
 
   @Patch(':id/deactivate')
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Deactivate staff account' })
-  deactivate(@Param('id') id: string) {
-    return this.staffService.deactivate(id);
+  deactivate(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.staffService.deactivate(id, user.storeId);
   }
 
   @Delete(':id')
   @Roles('owner')
   @ApiOperation({ summary: 'Delete staff account' })
   delete(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.staffService.delete(id, user.sub);
+    return this.staffService.delete(id, user.sub, user.storeId);
   }
 
   @Put(':id/temporary-pin')
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Generate a temporary PIN for a staff member' })
-  generateTemporaryPin(@Param('id') id: string) {
-    return this.staffService.generateTemporaryPin(id);
+  generateTemporaryPin(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.staffService.generateTemporaryPin(id, user.storeId);
   }
 
   @Post(':id/resend-credentials')
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Resend login credentials (new temp PIN) to staff email' })
-  resendCredentials(@Param('id') id: string) {
-    return this.staffService.resendCredentials(id);
+  resendCredentials(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.staffService.resendCredentials(id, user.storeId);
   }
 
   @Get('audit/all')
@@ -107,8 +113,8 @@ export class StaffController {
   @Get(':id/activities')
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Get staff activity history (audit logs + shift events)' })
-  getActivities(@Param('id') id: string) {
-    return this.staffService.getActivities(id);
+  getActivities(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.staffService.getActivities(id, user.storeId);
   }
 
   @Post('clock-in')
@@ -117,6 +123,8 @@ export class StaffController {
     @CurrentUser() user: JwtPayload,
     @Body(new ZodValidationPipe(ClockInSchema)) dto: ClockInDto,
   ) {
+    // Security: always clock in to the authenticated user's store
+    dto.storeId = user.storeId;
     return this.staffService.clockIn(user.sub, dto);
   }
 

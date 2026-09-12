@@ -50,8 +50,8 @@ export class SalesController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get sale by ID with line items' })
-  getSale(@Param('id') id: string) {
-    return this.salesService.getSaleById(id);
+  getSale(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.salesService.getSaleById(id, user.storeId);
   }
 
   @Get()
@@ -66,8 +66,8 @@ export class SalesController {
   @Patch('hold')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Hold (pause) a sale in progress' })
-  holdSale(@Body(new ZodValidationPipe(HoldSaleSchema)) dto: HoldSaleDto) {
-    return this.salesService.holdSale(dto);
+  holdSale(@Body(new ZodValidationPipe(HoldSaleSchema)) dto: HoldSaleDto, @CurrentUser() user: JwtPayload) {
+    return this.salesService.holdSale(dto, user.sub, user.storeId);
   }
 
   @Patch('void')
@@ -78,7 +78,7 @@ export class SalesController {
     @Body(new ZodValidationPipe(VoidSaleSchema)) dto: VoidSaleDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.salesService.voidSale(dto, user.sub);
+    return this.salesService.voidSale(dto, user.sub, user.storeId);
   }
 
   @Patch(':id/receipt-printed')

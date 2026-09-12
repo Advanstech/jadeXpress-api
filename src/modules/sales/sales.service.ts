@@ -66,15 +66,44 @@ export class SalesService {
       subtotal += lineTotal;
     }
 
-    const taxableSubtotal = subtotal - dto.discountAmountPesewas;
-    const vatAmount = Math.round(taxableSubtotal * vatRate);
-    const nhilAmount = Math.round(taxableSubtotal * nhilRate);
-    const getfundAmount = Math.round(taxableSubtotal * getfundRate);
-    const total = taxableSubtotal + vatAmount + nhilAmount + getfundAmount;
+    if (dto.discountAmountPesewas > subtotal) {
+      throw new BadRequestException('Discount exceeds sale subtotal');
+    }
+    if (dto.loyaltyPointsRedeemed > 0 && !dto.customerId) {
+      throw new BadRequestException('Loyalty points can only be redeemed against a customer');
+    }
 
-    // Loyalty redemption value (100 points = GHS 1 = 100 pesewas)
+    // Prices are tax-inclusive (Ghana retail norm): the amount the cashier
+    // collects already contains VAT + NHIL + GETFund. Extract the components
+    // instead of adding them on top.
+    // Ghana stacking: levies apply to the base, VAT applies to (base + levies):
+    //   total = base × (1 + nhil + getfund) × (1 + vat)
+    const taxableTotal = Math.max(0, subtotal - dto.discountAmountPesewas);
+    const levyRate = nhilRate + getfundRate;
+    const taxableBase = Math.round(taxableTotal / ((1 + levyRate) * (1 + vatRate)));
+    const nhilAmount = Math.round(taxableBase * nhilRate);
+    const getfundAmount = Math.round(taxableBase * getfundRate);
+    // VAT absorbs any rounding remainder so the parts always sum to the total
+    const vatAmount = Math.max(0, taxableTotal - taxableBase - nhilAmount - getfundAmount);
+    const total = taxableTotal;
+
+    // Loyalty redemption value (1 point = 1 pesewa — treated as a tender)
     const loyaltyRedeemValue = dto.loyaltyPointsRedeemed;
     const finalTotal = Math.max(0, total - loyaltyRedeemValue);
+
+    // Cash and split tenders must physically cover the bill.
+    // (MoMo/card reference tenders send tendered == total.)
+    if (dto.tenderedPesewas < finalTotal) {
+      throw new BadRequestException(
+        `Insufficient tender: received ${dto.tenderedPesewas} pesewas, required ${finalTotal}`,
+      );
+    }
+    if (dto.tenderType === 'split' && dto.tenderBreakdown.length > 0) {
+      const breakdownSum = dto.tenderBreakdown.reduce((s, t) => s + t.amountPesewas, 0);
+      if (breakdownSum < finalTotal) {
+        throw new BadRequestException('Split tender breakdown does not cover the sale total');
+      }
+    }
     const change = Math.max(0, dto.tenderedPesewas - finalTotal);
 
     // Generate receipt number: JX-YYYYMMDD-XXXXXXXXXX
@@ -96,7 +125,7 @@ export class SalesService {
         shiftId: dto.shiftId,
         status: 'completed',
         paymentStatus: 'paid',
-        subtotalPesewas: subtotal,
+        subtotalPesewas: taxableBase,
         discountAmountPesewas: dto.discountAmountPesewas,
         vatAmountPesewas: vatAmount,
         nhilAmountPesewas: nhilAmount,
@@ -164,8 +193,17 @@ export class SalesService {
       }
 
       // ── Batch stock operations (eliminates N+1 inside transaction) ──────────
+      // Aggregate quantities per product — duplicate lines must not each
+      // validate/decrement against the same snapshot independently.
+      const qtyByProduct = new Map<string, number>();
+      const qtyByBatch = new Map<string, number>();
+      for (const item of dto.items) {
+        qtyByProduct.set(item.productId, (qtyByProduct.get(item.productId) ?? 0) + item.quantity);
+        if (item.batchId) qtyByBatch.set(item.batchId, (qtyByBatch.get(item.batchId) ?? 0) + item.quantity);
+      }
+
       // 1. Lock all stock rows for all products in one query
-      const productIds = dto.items.map((i) => i.productId);
+      const productIds = [...qtyByProduct.keys()];
       const lockedStockRows = await tx
         .select()
         .from(stockItems)
@@ -174,14 +212,14 @@ export class SalesService {
 
       const stockMap = new Map(lockedStockRows.map((s) => [s.productId, s]));
 
-      // 2. Validate all stock levels upfront
-      for (const item of dto.items) {
-        const stockItem = stockMap.get(item.productId);
+      // 2. Validate all stock levels upfront (against aggregated demand)
+      for (const [productId, totalQty] of qtyByProduct) {
+        const stockItem = stockMap.get(productId);
         if (!stockItem) {
-          throw new NotFoundException(`Stock record not found for product ${item.productId}`);
+          throw new NotFoundException(`Stock record not found for product ${productId}`);
         }
-        if (stockItem.quantityOnHand < item.quantity) {
-          throw new ConflictException(`Insufficient stock for product ${item.productId}`);
+        if (stockItem.quantityOnHand < totalQty) {
+          throw new ConflictException(`Insufficient stock for product ${productId}`);
         }
       }
 
@@ -208,30 +246,52 @@ export class SalesService {
         }
       }
 
-      // 4. Update batch quantities (batch items only)
+      // 4. Update batch quantities (aggregated per batch, scoped to store)
       const batchUpdates: Promise<any>[] = [];
       const batchCostPrices = new Map<string, number>();
-      for (const item of dto.items.filter((i) => i.batchId)) {
-        batchUpdates.push(
-          tx
-            .update(stockBatches)
-            .set({ quantityRemaining: sql`${stockBatches.quantityRemaining} - ${item.quantity}` })
-            .where(and(eq(stockBatches.id, item.batchId!), gte(stockBatches.quantityRemaining, item.quantity)))
-            .returning()
-            .then(([updatedBatch]) => {
-              if (!updatedBatch) throw new ConflictException(`Insufficient batch stock for ${item.batchId}`);
-              batchCostPrices.set(item.productId, updatedBatch.costPricePesewas);
-            }),
-        );
+      const batchIds = [...qtyByBatch.keys()];
+      if (batchIds.length > 0) {
+        // Scope to this store's batches — a batchId from another store/product
+        // must not be decremented.
+        const validBatches = await tx
+          .select({ id: stockBatches.id, productId: stockBatches.productId })
+          .from(stockBatches)
+          .where(and(inArray(stockBatches.id, batchIds), eq(stockBatches.storeId, dto.storeId)));
+        const validBatchIds = new Set(validBatches.map((b) => b.id));
+        for (const batchId of batchIds) {
+          if (!validBatchIds.has(batchId)) {
+            throw new NotFoundException(`Batch ${batchId} not found in this store`);
+          }
+        }
+        for (const [batchId, totalQty] of qtyByBatch) {
+          batchUpdates.push(
+            tx
+              .update(stockBatches)
+              .set({ quantityRemaining: sql`${stockBatches.quantityRemaining} - ${totalQty}` })
+              .where(and(
+                eq(stockBatches.id, batchId),
+                eq(stockBatches.storeId, dto.storeId),
+                gte(stockBatches.quantityRemaining, totalQty),
+              ))
+              .returning()
+              .then(([updatedBatch]) => {
+                if (!updatedBatch) throw new ConflictException(`Insufficient batch stock for ${batchId}`);
+                batchCostPrices.set(updatedBatch.productId, updatedBatch.costPricePesewas);
+              }),
+          );
+        }
       }
       await Promise.all(batchUpdates);
 
       // 5. Build all stock movements in memory, then insert in one query
       const movementInserts: any[] = [];
+      const runningQty = new Map<string, number>();
       for (const item of dto.items) {
         const stockItem = stockMap.get(item.productId)!;
-        const qtyBefore = stockItem.quantityOnHand;
+        // Track a running balance so duplicate lines get correct before/after
+        const qtyBefore = runningQty.get(item.productId) ?? stockItem.quantityOnHand;
         const qtyAfter = qtyBefore - item.quantity;
+        runningQty.set(item.productId, qtyAfter);
         const costPrice = item.batchId
           ? batchCostPrices.get(item.productId) ?? null
           : costPriceMap.get(item.productId) ?? null;
@@ -252,15 +312,21 @@ export class SalesService {
       }
       await tx.insert(stockMovements).values(movementInserts);
 
-      // 6. Update all stock items (one update per product — needed for per-product qty)
-      const stockUpdatePromises = dto.items.map((item) => {
-        const stockItem = stockMap.get(item.productId)!;
-        const qtyAfter = stockItem.quantityOnHand - item.quantity;
-        return tx
+      // 6. Update all stock items — one atomic decrement per product (aggregated)
+      const stockUpdatePromises = [...qtyByProduct.entries()].map(([productId, totalQty]) =>
+        tx
           .update(stockItems)
-          .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
-          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, dto.storeId)));
-      });
+          .set({
+            quantityOnHand: sql`${stockItems.quantityOnHand} - ${totalQty}`,
+            lastMovementAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(and(
+            eq(stockItems.productId, productId),
+            eq(stockItems.storeId, dto.storeId),
+            gte(stockItems.quantityOnHand, totalQty),
+          )),
+      );
       await Promise.all(stockUpdatePromises);
 
       await tx.insert(ledgerEntries).values({
@@ -277,7 +343,7 @@ export class SalesService {
         performedById: cashierId,
       });
 
-      if (dto.customerId && pointsEarned > 0) {
+      if (dto.customerId && (pointsEarned > 0 || dto.loyaltyPointsRedeemed > 0)) {
         const [customer] = await tx
           .select({ loyaltyPoints: customers.loyaltyPoints })
           .from(customers)
@@ -285,7 +351,14 @@ export class SalesService {
           .for('update')
           .limit(1);
 
-        const newBalance = (customer?.loyaltyPoints ?? 0) + pointsEarned - dto.loyaltyPointsRedeemed;
+        if (!customer) throw new NotFoundException('Customer not found');
+        if (dto.loyaltyPointsRedeemed > customer.loyaltyPoints) {
+          throw new BadRequestException(
+            `Insufficient loyalty points: customer has ${customer.loyaltyPoints}, tried to redeem ${dto.loyaltyPointsRedeemed}`,
+          );
+        }
+
+        const newBalance = customer.loyaltyPoints + pointsEarned - dto.loyaltyPointsRedeemed;
 
         await tx
           .update(customers)
@@ -321,9 +394,9 @@ export class SalesService {
   }
 
   // ── Get Sale ──────────────────────────────────────────────────────────────
-  async getSaleById(id: string) {
+  async getSaleById(id: string, storeId?: string) {
     const sale = await this.db.query.sales.findFirst({
-      where: eq(sales.id, id),
+      where: storeId ? and(eq(sales.id, id), eq(sales.storeId, storeId)) : eq(sales.id, id),
       with: { cashier: true },
     });
     if (!sale) throw new NotFoundException('Sale not found');
@@ -368,36 +441,43 @@ export class SalesService {
   }
 
   // ── Hold Sale ─────────────────────────────────────────────────────────────
-  async holdSale(dto: HoldSaleDto) {
+  async holdSale(dto: HoldSaleDto, staffId: string, storeId: string) {
     const [sale] = await this.db
       .update(sales)
       .set({ status: 'held', heldAt: new Date(), heldNote: dto.heldNote, updatedAt: new Date() })
-      .where(eq(sales.id, dto.saleId))
+      // Only in-progress sales can be held — holding a completed sale would
+      // hide collected revenue from reports while stock stays decremented.
+      .where(and(eq(sales.id, dto.saleId), eq(sales.storeId, storeId), eq(sales.status, 'in_progress')))
       .returning();
 
-    if (sale) {
-      await this.db.insert(auditLogs).values({
-        staffId: sale.cashierId,
-        storeId: sale.storeId,
-        action: 'SALE_HELD',
-        entityType: 'sale',
-        entityId: sale.id,
-        newData: { heldNote: dto.heldNote },
-      });
-    }
+    if (!sale) throw new NotFoundException('In-progress sale not found in this store');
+
+    await this.db.insert(auditLogs).values({
+      staffId,
+      storeId: sale.storeId,
+      action: 'SALE_HELD',
+      entityType: 'sale',
+      entityId: sale.id,
+      newData: { heldNote: dto.heldNote },
+    });
 
     return sale;
   }
 
   // ── Void Sale ─────────────────────────────────────────────────────────────
-  async voidSale(dto: VoidSaleDto, staffId: string) {
+  async voidSale(dto: VoidSaleDto, staffId: string, storeId: string) {
     const [sale] = await this.db
       .select()
       .from(sales)
-      .where(eq(sales.id, dto.saleId))
+      .where(and(eq(sales.id, dto.saleId), eq(sales.storeId, storeId)))
       .limit(1);
 
     if (!sale) throw new NotFoundException('Sale not found');
+    // Refunded sales already restocked via refund flow — voiding them would
+    // double-restore stock. Void only completed sales.
+    if (sale.status === 'refunded' || sale.status === 'partially_refunded') {
+      throw new ConflictException('Cannot void a refunded sale — stock was already restored via refund');
+    }
 
     const updated = await this.db.transaction(async (tx) => {
       const [locked] = await tx
@@ -415,7 +495,14 @@ export class SalesService {
         .where(eq(saleItems.saleId, dto.saleId));
 
       // ── Batch stock operations (eliminates N+1 inside transaction) ──────────
-      const productIds = items.map((i) => i.productId);
+      const qtyByProduct = new Map<string, number>();
+      const qtyByBatch = new Map<string, number>();
+      for (const item of items) {
+        qtyByProduct.set(item.productId, (qtyByProduct.get(item.productId) ?? 0) + item.quantity);
+        if (item.batchId) qtyByBatch.set(item.batchId, (qtyByBatch.get(item.batchId) ?? 0) + item.quantity);
+      }
+
+      const productIds = [...qtyByProduct.keys()];
       const lockedStockRows = await tx
         .select()
         .from(stockItems)
@@ -425,22 +512,25 @@ export class SalesService {
       const stockMap = new Map(lockedStockRows.map((s) => [s.productId, s]));
 
       // Validate all stock records exist
-      for (const item of items) {
-        if (!stockMap.has(item.productId)) {
-          throw new NotFoundException(`Stock record not found for product ${item.productId}`);
+      for (const productId of qtyByProduct.keys()) {
+        if (!stockMap.has(productId)) {
+          throw new NotFoundException(`Stock record not found for product ${productId}`);
         }
       }
 
       // Build all stock movements in memory, then insert in one query
       const movementInserts: any[] = [];
+      const runningQty = new Map<string, number>();
       for (const item of items) {
         const stockItem = stockMap.get(item.productId)!;
-        const qtyBefore = stockItem.quantityOnHand;
+        const qtyBefore = runningQty.get(item.productId) ?? stockItem.quantityOnHand;
         const qtyAfter = qtyBefore + item.quantity;
+        runningQty.set(item.productId, qtyAfter);
 
         movementInserts.push({
           productId: item.productId,
           storeId: sale.storeId,
+          batchId: item.batchId,
           type: 'return_in' as const,
           quantityChange: item.quantity,
           quantityBefore: qtyBefore,
@@ -453,20 +543,85 @@ export class SalesService {
       }
       await tx.insert(stockMovements).values(movementInserts);
 
-      // Update all stock items in parallel
-      const stockUpdatePromises = items.map((item) => {
-        const stockItem = stockMap.get(item.productId)!;
-        const qtyAfter = stockItem.quantityOnHand + item.quantity;
-        return tx
+      // Restore stock items (aggregated atomic increments)
+      const stockUpdatePromises = [...qtyByProduct.entries()].map(([productId, totalQty]) =>
+        tx
           .update(stockItems)
-          .set({ quantityOnHand: qtyAfter, lastMovementAt: new Date(), updatedAt: new Date() })
-          .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, sale.storeId)));
-      });
+          .set({
+            quantityOnHand: sql`${stockItems.quantityOnHand} + ${totalQty}`,
+            lastMovementAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(and(eq(stockItems.productId, productId), eq(stockItems.storeId, sale.storeId))),
+      );
       await Promise.all(stockUpdatePromises);
+
+      // Restore batch quantities for items that had a batch
+      const batchRestorePromises = [...qtyByBatch.entries()].map(([batchId, totalQty]) =>
+        tx
+          .update(stockBatches)
+          .set({ quantityRemaining: sql`${stockBatches.quantityRemaining} + ${totalQty}` })
+          .where(and(eq(stockBatches.id, batchId), eq(stockBatches.storeId, sale.storeId))),
+      );
+      await Promise.all(batchRestorePromises);
+
+      // Reverse the revenue ledger entry — voided sales must not leave a
+      // permanent credit in the books.
+      await tx.insert(ledgerEntries).values({
+        storeId: sale.storeId,
+        entryType: 'debit',
+        category: 'revenue',
+        amountPesewas: sale.totalPesewas,
+        vatAmountPesewas: sale.vatAmountPesewas,
+        nhilAmountPesewas: sale.nhilAmountPesewas,
+        getfundAmountPesewas: sale.getfundAmountPesewas,
+        description: `VOID Sale ${sale.receiptNumber}: ${dto.reason}`,
+        referenceType: 'void',
+        referenceId: sale.id,
+        performedById: staffId,
+      });
+
+      // Mark the sale's payments as refunded so payment reconciliations don't
+      // count money that was handed back.
+      await tx
+        .update(payments)
+        .set({ status: 'refunded' })
+        .where(eq(payments.saleId, sale.id));
+
+      // Reverse loyalty effects — remove earned points, return redeemed points
+      if (sale.customerId && (sale.loyaltyPointsEarned > 0 || sale.loyaltyPointsRedeemed > 0)) {
+        const [customer] = await tx
+          .select({ loyaltyPoints: customers.loyaltyPoints })
+          .from(customers)
+          .where(eq(customers.id, sale.customerId))
+          .for('update')
+          .limit(1);
+
+        if (customer) {
+          const reversalBalance = customer.loyaltyPoints - sale.loyaltyPointsEarned + sale.loyaltyPointsRedeemed;
+          await tx
+            .update(customers)
+            .set({
+              loyaltyPoints: Math.max(0, reversalBalance),
+              totalSpendPesewas: sql`GREATEST(0, ${customers.totalSpendPesewas} - ${sale.totalPesewas})`,
+              visitCount: sql`GREATEST(0, ${customers.visitCount} - 1)`,
+              updatedAt: new Date(),
+            })
+            .where(eq(customers.id, sale.customerId));
+
+          await tx.insert(loyaltyTransactions).values({
+            customerId: sale.customerId,
+            saleId: sale.id,
+            pointsDelta: sale.loyaltyPointsRedeemed - sale.loyaltyPointsEarned,
+            balanceAfter: Math.max(0, reversalBalance),
+            reason: `Void of sale ${sale.receiptNumber}`,
+          });
+        }
+      }
 
       const [updatedSale] = await tx
         .update(sales)
-        .set({ status: 'voided', updatedAt: new Date(), notes: dto.reason })
+        .set({ status: 'voided', paymentStatus: 'refunded', updatedAt: new Date(), notes: dto.reason })
         .where(eq(sales.id, dto.saleId))
         .returning();
 
@@ -476,10 +631,16 @@ export class SalesService {
         action: 'SALE_VOIDED',
         entityType: 'sale',
         entityId: sale.id,
-        newData: { reason: dto.reason },
+        newData: { reason: dto.reason, authorizedById: dto.authorizedById },
       });
 
       return updatedSale;
+    });
+
+    this.realtime.broadcastToStore(sale.storeId, 'sale:voided', {
+      saleId: sale.id,
+      receiptNumber: sale.receiptNumber,
+      voidedById: staffId,
     });
 
     return updated;

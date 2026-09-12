@@ -302,7 +302,7 @@ export class SuppliersService {
   }
 
   // ── Delete Invoice ────────────────────────────────────────────────────────────
-  async deleteInvoice(id: string) {
+  async deleteInvoice(id: string, storeId?: string) {
     return this.db.transaction(async (tx) => {
       const [invoice] = await tx.select().from(supplierInvoices).where(eq(supplierInvoices.id, id));
       if (!invoice) {
@@ -315,6 +315,9 @@ export class SuppliersService {
 
       if (invoice.purchaseOrderId) {
         const [po] = await tx.select().from(purchaseOrders).where(eq(purchaseOrders.id, invoice.purchaseOrderId));
+        if (po && storeId && po.storeId !== storeId) {
+          throw new NotFoundException('Invoice not found');
+        }
         if (po && (po.status === 'received' || po.paymentStatus === 'paid' || po.paymentStatus === 'partial')) {
           throw new BadRequestException('Cannot delete invoice because the associated purchase order has already been received or paid');
         }
@@ -382,7 +385,9 @@ export class SuppliersService {
     return paginate(data, Number(count), page, limit);
   }
 
-  async getPurchaseOrder(id: string) {
+  async getPurchaseOrder(id: string, storeId?: string) {
+    const conditions = [eq(purchaseOrders.id, id)];
+    if (storeId) conditions.push(eq(purchaseOrders.storeId, storeId));
     const [po] = await this.db
       .select({
         ...getTableColumns(purchaseOrders),
@@ -390,7 +395,7 @@ export class SuppliersService {
       })
       .from(purchaseOrders)
       .leftJoin(staffProfile, eq(purchaseOrders.approvedById, staffProfile.id))
-      .where(eq(purchaseOrders.id, id))
+      .where(and(...conditions))
       .limit(1);
     if (!po) throw new NotFoundException('Purchase order not found');
 
@@ -415,9 +420,9 @@ export class SuppliersService {
   }
 
   // ── Update Purchase Order Items ───────────────────────────────────────────
-  async updatePurchaseOrderItems(id: string, dto: UpdatePurchaseOrderItemsDto, updatedById: string) {
+  async updatePurchaseOrderItems(id: string, dto: UpdatePurchaseOrderItemsDto, updatedById: string, storeId?: string) {
     const [po] = await this.db.select().from(purchaseOrders).where(eq(purchaseOrders.id, id)).limit(1);
-    if (!po) throw new NotFoundException('Purchase order not found');
+    if (!po || (storeId && po.storeId !== storeId)) throw new NotFoundException('Purchase order not found');
 
     const [invoice] = await this.db.select().from(supplierInvoices).where(eq(supplierInvoices.purchaseOrderId, id)).limit(1);
 
@@ -520,13 +525,13 @@ export class SuppliersService {
   }
 
   // ── Receive Goods ─────────────────────────────────────────────────────────
-  async receiveGoods(dto: ReceiveGoodsDto, receivedById: string) {
+  async receiveGoods(dto: ReceiveGoodsDto, receivedById: string, storeId?: string) {
     const [po] = await this.db
       .select()
       .from(purchaseOrders)
       .where(eq(purchaseOrders.id, dto.purchaseOrderId))
       .limit(1);
-    if (!po) throw new NotFoundException('Purchase order not found');
+    if (!po || (storeId && po.storeId !== storeId)) throw new NotFoundException('Purchase order not found');
 
     await this.db.transaction(async (tx) => {
       for (const received of dto.items) {
@@ -640,15 +645,21 @@ export class SuppliersService {
     return { success: true, purchaseOrderId: po.id };
   }
 
-  async payPurchaseOrder(id: string, dto: PayPurchaseOrderDto, staffId: string) {
+  async payPurchaseOrder(id: string, dto: PayPurchaseOrderDto, staffId: string, storeId?: string) {
     const [po] = await this.db
       .select()
       .from(purchaseOrders)
       .where(eq(purchaseOrders.id, id))
       .limit(1);
 
-    if (!po) throw new NotFoundException('Purchase order not found');
-    if (dto.amountPesewas > po.balancePesewas && po.balancePesewas > 0) {
+    if (!po || (storeId && po.storeId !== storeId)) throw new NotFoundException('Purchase order not found');
+    if (po.status === 'cancelled') {
+      throw new BadRequestException('Cannot pay a cancelled purchase order');
+    }
+    if (po.balancePesewas <= 0) {
+      throw new BadRequestException('Purchase order is already fully paid');
+    }
+    if (dto.amountPesewas > po.balancePesewas) {
       throw new BadRequestException(`Payment amount cannot exceed balance of ${po.balancePesewas} pesewas`);
     }
 
@@ -668,16 +679,16 @@ export class SuppliersService {
         })
         .where(eq(purchaseOrders.id, id));
 
-      // 2. Ledger Entry — single debit (cash outflow). The previous matching
-      // credit entry canceled this out in cash-flow reports, hiding payments.
+      // 2. Ledger Entry — single debit (cash outflow). referenceId is a UUID
+      // column — store the PO id; the free-text reference goes in description.
       await tx.insert(ledgerEntries).values({
         storeId: po.storeId,
         entryType: 'debit',
         category: 'expense',
         amountPesewas: dto.amountPesewas,
         referenceType: 'SUPPLIER_PAYMENT',
-        referenceId: dto.reference || `PAY-${Date.now().toString().slice(-6)}`,
-        description: `Supplier Payment (Cash Outflow) for PO ${po.poNumber} via ${dto.paymentMethod.toUpperCase()}`,
+        referenceId: po.id,
+        description: `Supplier Payment (Cash Outflow) for PO ${po.poNumber} via ${dto.paymentMethod.toUpperCase()}${dto.reference ? ` — ref ${dto.reference}` : ''}`,
         performedById: staffId,
       });
 
@@ -691,14 +702,14 @@ export class SuppliersService {
     });
   }
 
-  async approvePurchaseOrder(id: string, staffId: string, notes?: string, items?: { productId: string, sellingPricePesewas: number }[]) {
+  async approvePurchaseOrder(id: string, staffId: string, storeId?: string, notes?: string, items?: { productId: string, sellingPricePesewas: number }[]) {
     const [po] = await this.db
       .select()
       .from(purchaseOrders)
       .where(eq(purchaseOrders.id, id))
       .limit(1);
 
-    if (!po) throw new NotFoundException('Purchase order not found');
+    if (!po || (storeId && po.storeId !== storeId)) throw new NotFoundException('Purchase order not found');
 
     return await this.db.transaction(async (tx) => {
       // Sync edited prices to products
@@ -837,7 +848,7 @@ export class SuppliersService {
     });
   }
 
-  async rejectPurchaseOrder(id: string, staffId: string, notes?: string) {
+  async rejectPurchaseOrder(id: string, staffId: string, storeId?: string, notes?: string) {
     const [po] = await this.db
       .update(purchaseOrders)
       .set({
@@ -845,7 +856,11 @@ export class SuppliersService {
         status: 'cancelled', // Reverting or cancelling
         updatedAt: new Date(),
       })
-      .where(eq(purchaseOrders.id, id))
+      .where(
+        storeId
+          ? and(eq(purchaseOrders.id, id), eq(purchaseOrders.storeId, storeId))
+          : eq(purchaseOrders.id, id),
+      )
       .returning();
 
     if (!po) throw new NotFoundException('Purchase order not found');

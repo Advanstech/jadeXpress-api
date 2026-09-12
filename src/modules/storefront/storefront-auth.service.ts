@@ -29,13 +29,22 @@ export class StorefrontAuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    const existing = await this.db
-      .select({ id: customers.id })
-      .from(customers)
-      .where(eq(customers.email, dto.email.toLowerCase()))
-      .limit(1);
+    const email = dto.email.toLowerCase();
 
-    if (existing.length > 0) {
+    const [existing, staff] = await Promise.all([
+      this.db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(eq(customers.email, email))
+        .limit(1),
+      this.db
+        .select({ id: staffProfile.id })
+        .from(staffProfile)
+        .where(and(eq(staffProfile.email, email), eq(staffProfile.isActive, true)))
+        .limit(1),
+    ]);
+
+    if (existing.length > 0 || staff.length > 0) {
       throw new ConflictException('An account with this email already exists');
     }
 
@@ -46,7 +55,7 @@ export class StorefrontAuthService {
       .values({
         firstName: dto.firstName,
         lastName: dto.lastName,
-        email: dto.email.toLowerCase(),
+        email,
         phone: dto.phone,
         passwordHash,
       })
@@ -147,19 +156,6 @@ export class StorefrontAuthService {
       .returning();
     if (!customer) throw new NotFoundException('Customer not found');
 
-    if (customer.email) {
-      const staffUpdates: any = { updatedAt: new Date() };
-      if (dto.firstName) staffUpdates.firstName = dto.firstName;
-      if (dto.lastName) staffUpdates.lastName = dto.lastName;
-      if (dto.phone !== undefined) staffUpdates.phone = dto.phone;
-      if (dto.avatarUrl !== undefined) staffUpdates.avatarUrl = dto.avatarUrl;
-
-      await this.db
-        .update(staffProfile)
-        .set(staffUpdates)
-        .where(eq(staffProfile.email, customer.email.toLowerCase()));
-    }
-
     const { role } = await this.getEffectiveRoleAndStore(customer.email);
     return this.toPublicProfile(customer, role);
   }
@@ -207,13 +203,16 @@ export class StorefrontAuthService {
   }
 
   private async issueTokens(customer: typeof customers.$inferSelect) {
-    const { role, storeId } = await this.getEffectiveRoleAndStore(customer.email);
+    // Storefront sessions are ALWAYS customer tokens. A customer account that
+    // happens to share an email with a staff member must not inherit staff
+    // privileges — staff must authenticate through the staff/PIN login.
+    const { role } = await this.getEffectiveRoleAndStore(customer.email);
 
     const payload: JwtPayload = {
       sub: customer.id,
-      role,
-      storeId,
-      type: role === 'customer' ? 'customer' : 'staff',
+      role: 'customer',
+      storeId: '',
+      type: 'customer',
     };
 
     const accessToken = this.jwtService.sign(payload);

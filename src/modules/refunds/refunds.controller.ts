@@ -24,8 +24,8 @@ export class RefundsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get refund details with line items' })
-  getById(@Param('id') id: string) {
-    return this.refundsService.getById(id);
+  getById(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.refundsService.getById(id, user.storeId);
   }
 
   @Post()
@@ -44,13 +44,13 @@ export class RefundsController {
   @Roles('manager', 'owner', 'supervisor')
   @ApiOperation({ summary: 'Approve a pending refund request' })
   approve(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.refundsService.approve(id, user.sub);
+    return this.refundsService.approve(id, user.sub, user.storeId);
   }
 
   @Post(':id/reject')
   @Roles('manager', 'owner', 'supervisor')
   @ApiOperation({ summary: 'Reject a pending refund request' })
   reject(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.refundsService.reject(id, user.sub);
+    return this.refundsService.reject(id, user.sub, user.storeId);
   }
 }

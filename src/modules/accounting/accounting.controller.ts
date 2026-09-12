@@ -13,6 +13,18 @@ const LedgerQuerySchema = PaginationSchema.extend({
   category: z.string().optional(),
 });
 
+const ManualJournalSchema = z.object({
+  accountCode: z.string().max(20).optional(),
+  accountName: z.string().max(255).optional(),
+  category: z.string().max(60).optional(),
+  entryType: z.enum(['debit', 'credit']),
+  amountPesewas: z.number().int().min(1),
+  referenceType: z.string().max(50).optional(),
+  reference: z.string().max(100).optional(),
+  referenceId: z.string().max(100).optional(), // free-text ref from client
+  description: z.string().max(500).optional(),
+});
+
 @ApiTags('accounting')
 @ApiBearerAuth()
 @Roles('manager', 'owner')
@@ -95,6 +107,18 @@ export class AccountingController {
     @Query(new ZodValidationPipe(LedgerQuerySchema)) query: any,
   ) {
     return this.accountingService.getLedger(user.storeId, query);
+  }
+
+  @Post('ledger')
+  @ApiOperation({ summary: 'Post a manual journal entry' })
+  createManualEntry(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(ManualJournalSchema)) dto: any,
+  ) {
+    return this.accountingService.createManualEntry(user.storeId, user.sub, {
+      ...dto,
+      reference: dto.reference ?? dto.referenceId,
+    });
   }
 
   @Post('snapshot')
