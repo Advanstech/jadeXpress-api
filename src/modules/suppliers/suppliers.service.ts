@@ -294,6 +294,8 @@ export class SuppliersService {
           imageUrl: dto.invoiceImageUrl,
           ocrExtracted: dto.ocrExtracted ?? false,
           ocrConfirmed: dto.ocrExtracted ?? false,
+          uploadedById: raisedById,
+          confirmedById: dto.ocrExtracted ? raisedById : undefined,
         });
       }
 

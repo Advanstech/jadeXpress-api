@@ -123,6 +123,8 @@ export const supplierInvoices = pgTable('invoice', {
   imageUrl: text('image_url'), // scanned invoice / OCR source
   ocrExtracted: boolean('ocr_extracted').notNull().default(false),
   ocrConfirmed: boolean('ocr_confirmed').notNull().default(false),
+  uploadedById: uuid('uploaded_by_id').references(() => staffProfile.id),
+  confirmedById: uuid('confirmed_by_id').references(() => staffProfile.id),
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -190,6 +192,8 @@ export const supplierInvoicesRelations = relations(supplierInvoices, ({ one, man
     fields: [supplierInvoices.purchaseOrderId],
     references: [purchaseOrders.id],
   }),
+  uploadedBy: one(staffProfile, { fields: [supplierInvoices.uploadedById], references: [staffProfile.id] }),
+  confirmedBy: one(staffProfile, { fields: [supplierInvoices.confirmedById], references: [staffProfile.id] }),
   payments: many(invoicePayments),
 }));
 
