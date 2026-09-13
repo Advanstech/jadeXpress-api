@@ -13742,9 +13742,42 @@ async function seed() {
     },
   ];
 
-  console.log(`📦 Seeding ${productData.length} unique products with verified transparent cards...`);
+  const mergedDuplicateSkus = new Set([
+    '21STASHW-SP06-VX4I-2',
+    '21STBCOM-SP07-XH9T-3',
+    '21STBIOT-SP08-CNH7-6',
+    '21STARTH-SP06-WNCK-1',
+    '21STCRAN-SP09-L8XW-9',
+    '21ST-CRN-PRO-60T',
+    '21STBEET-SP07-GLTL-5',
+    '21STCHRO-SP09-3Q0O-8',
+    '21STFULL-SQ3J-CDBU-15',
+    '21STARTH-SP05-GDLW-0',
+    '21STB125-SP07-X750-4',
+    '21STHERB-SQ3K-COZP-18',
+    '21STDHEA-SQ3I-Y47O-11',
+    '21STGLUT-SQ3K-K3QA-17',
+    '21STLARG-SQ3L-XH9R-19',
+    '21STDIAB-SQ3I-8AVY-12',
+    '21STMILK-SQJS-B3L2-22',
+    'TMORGANI-SQJU-U2KV-28',
+    'TMORGANI-SQJV-P1S7-29',
+    'TMROASTE-SR69-5KZ0-31',
+    'TMORGANI-SQJU-8QGO-27',
+    'TMORGANI-SR68-17RA-30',
+    'OGX-RWSS-577ML',
+    'INT-ROS-120',
+    'IR-FBP-60CAP',
+    'SOL-EST-180',
+    'SOL-EST-90',
+    'TIM-BER-120',
+    'TIM-BER-60',
+  ]);
+  const seedProducts = productData.filter((item) => !mergedDuplicateSkus.has(item.sku));
 
-  for (const item of productData) {
+  console.log(`📦 Seeding ${seedProducts.length} unique products with verified transparent cards...`);
+
+  for (const item of seedProducts) {
     const categoryId = categoryMap.get(item.categorySlug) || Array.from(categoryMap.values())[0];
     const primarySupplierId = supplierMap.get(item.supplierCode) || Array.from(supplierMap.values())[0];
 
