@@ -85,6 +85,8 @@ export const UpdatePurchaseOrderItemsSchema = z.object({
     name: z.string().min(1),
     quantityReceived: z.number().int().min(0),
     unitCostPesewas: z.number().int().min(0),
+    unit: z.string().min(1).max(50).optional(),
+    packSize: z.number().int().min(1).optional(),
     sellingPricePesewas: z.number().int().min(0).optional(),
   })).min(1),
   invoiceTotalGhs: z.number().optional(),

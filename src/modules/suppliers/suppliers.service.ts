@@ -412,6 +412,8 @@ export class SuppliersService {
         batchNumber: purchaseItems.batchNumber,
         sku: products.sku,
         name: products.name,
+        unit: products.unit,
+        packSize: products.packSize,
         sellingPricePesewas: products.sellingPricePesewas,
       })
       .from(purchaseItems)
@@ -455,6 +457,12 @@ export class SuppliersService {
         const productUpdates: any = { name: item.name };
         if (item.sellingPricePesewas !== undefined) {
           productUpdates.sellingPricePesewas = item.sellingPricePesewas;
+        }
+        if (item.unit !== undefined) {
+          productUpdates.unit = item.unit;
+        }
+        if (item.packSize !== undefined) {
+          productUpdates.packSize = item.packSize;
         }
         await tx.update(products).set(productUpdates).where(eq(products.id, item.productId));
 
