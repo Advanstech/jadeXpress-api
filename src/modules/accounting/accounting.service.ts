@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { eq, and, gte, lte, desc, sql, inArray } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
-import { plSnapshots, ledgerEntries, sales, expenses, refundRequests, stockMovements } from '../../database/schema';
+import { plSnapshots, ledgerEntries, sales, expenses, refundRequests, stockMovements, organisation } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import { normalizeDateRange, parseStartOfDay, parseEndOfDay } from '../../common/utils/date-range';
 
@@ -206,13 +206,23 @@ export class AccountingService {
     const nhil = Number(totals.nhilTotal);
     const getfund = Number(totals.getfundTotal);
 
+    // Configured rates are returned alongside the stored amounts so the UI
+    // shows the real percentages (which may be 0) rather than hardcoded labels.
+    const [org] = await this.db.select().from(organisation).limit(1);
+    const rates = {
+      vatPct: (org?.vatRateBps ?? 1500) / 100,
+      nhilPct: (org?.nhilRateBps ?? 250) / 100,
+      getfundPct: (org?.getfundRateBps ?? 250) / 100,
+    };
+
     return {
       vatTotalPesewas: vat,
       nhilTotalPesewas: nhil,
       getfundTotalPesewas: getfund,
       combinedTaxPesewas: vat + nhil + getfund,
+      rates,
       period: { from, to },
-      note: 'Ghana VAT 15% + NHIL 2.5% + GETFund 2.5%',
+      note: `Ghana VAT ${rates.vatPct}% + NHIL ${rates.nhilPct}% + GETFund ${rates.getfundPct}%`,
     };
   }
 

@@ -29,6 +29,7 @@ import { InvoicingModule } from './modules/invoicing/invoicing.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { StorefrontModule } from './modules/storefront/storefront.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
+import { SettingsModule } from './modules/settings/settings.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { UploadsModule } from './modules/uploads/uploads.module';
     PaymentsModule,
     StorefrontModule,
     UploadsModule,
+    SettingsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
