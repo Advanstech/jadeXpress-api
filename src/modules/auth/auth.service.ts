@@ -99,7 +99,11 @@ export class AuthService {
       throw new UnauthorizedException('Invalid PIN');
     }
 
-    await this.resetPinLock(staff.id);
+    // Skip the write entirely on the common path (attempts already 0) —
+    // saves a full DB round-trip on every POS login.
+    if ((staff.failedPinAttempts ?? 0) > 0 || staff.pinLockedUntil) {
+      await this.resetPinLock(staff.id);
+    }
     return this.issueTokens(staff);
   }
 
@@ -124,7 +128,9 @@ export class AuthService {
       return { valid: false, role: '' };
     }
 
-    await this.resetPinLock(staff.id);
+    if ((staff.failedPinAttempts ?? 0) > 0 || staff.pinLockedUntil) {
+      await this.resetPinLock(staff.id);
+    }
     return { valid, role: staff.role };
   }
 
@@ -160,24 +166,29 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    // Opportunistic cleanup — purge expired tokens so the table stays small
-    await this.db
-      .delete(refreshTokens)
-      .where(lt(refreshTokens.expiresAt, new Date()));
+    // Occasional cleanup — purge expired tokens ~10% of the time instead of
+    // paying for a full-table DELETE on every refresh.
+    if (Math.random() < 0.1) {
+      await this.db
+        .delete(refreshTokens)
+        .where(lt(refreshTokens.expiresAt, new Date()));
+    }
 
-    const [staff] = await this.db
-      .select()
-      .from(staffProfile)
-      .where(eq(staffProfile.id, stored.staffId))
-      .limit(1);
+    // Staff lookup and token revocation are independent — run them in
+    // parallel to save a Neon round-trip.
+    const [[staff]] = await Promise.all([
+      this.db
+        .select()
+        .from(staffProfile)
+        .where(eq(staffProfile.id, stored.staffId))
+        .limit(1),
+      this.db
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(eq(refreshTokens.id, stored.id)),
+    ]);
 
     if (!staff || !staff.isActive) throw new UnauthorizedException('Account deactivated');
-
-    // Rotate — revoke old, issue new
-    await this.db
-      .update(refreshTokens)
-      .set({ revokedAt: new Date() })
-      .where(eq(refreshTokens.id, stored.id));
 
     return this.issueTokens(staff);
   }
