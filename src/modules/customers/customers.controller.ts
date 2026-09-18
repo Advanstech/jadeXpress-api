@@ -18,7 +18,9 @@ export class CustomersController {
 
   @Get()
   @ApiOperation({ summary: 'List customers' })
-  list(@Query(new ZodValidationPipe(PaginationSchema)) query: any) {
+  list(@Query(new ZodValidationPipe(PaginationSchema)) query: any, @CurrentUser() user: JwtPayload) {
+    const isGlobal = ['root', 'super_admin'].includes(user.role?.toLowerCase());
+    if (!isGlobal) query.storeId = user.storeId;
     return this.customersService.list(query);
   }
 
@@ -30,8 +32,9 @@ export class CustomersController {
 
   @Post('nl-search')
   @ApiOperation({ summary: 'Natural-language customer search (fallback filter; full NL at /ai/customer-search)' })
-  nlSearch(@Body(new ZodValidationPipe(NlSearchSchema)) dto: NlSearchDto) {
-    return this.customersService.nlSearch(dto.query, dto.storeId);
+  nlSearch(@Body(new ZodValidationPipe(NlSearchSchema)) dto: NlSearchDto, @CurrentUser() user: JwtPayload) {
+    const isGlobal = ['root', 'super_admin'].includes(user.role?.toLowerCase());
+    return this.customersService.nlSearch(dto.query, isGlobal ? dto.storeId : user.storeId);
   }
 
   @Get('phone/:phone')

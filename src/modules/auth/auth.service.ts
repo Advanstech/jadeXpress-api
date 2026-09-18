@@ -30,10 +30,13 @@ export class AuthService {
 
   // ── Email + Password login (manager/owner web portal) ─────────────────────
   async login(dto: LoginDto) {
+    const where = dto.staffId
+      ? eq(staffProfile.id, dto.staffId)
+      : eq(staffProfile.email, dto.email!.toLowerCase());
     const [staff] = await this.db
       .select()
       .from(staffProfile)
-      .where(eq(staffProfile.email, dto.email.toLowerCase()))
+      .where(where)
       .limit(1);
 
     if (!staff || !staff.passwordHash) {

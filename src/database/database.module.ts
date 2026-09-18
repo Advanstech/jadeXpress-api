@@ -25,6 +25,12 @@ export type DrizzleDB = ReturnType<typeof drizzle<typeof schema>>;
           // Allow time for Neon cold-start wake-up (compute may be suspended)
           connectionTimeoutMillis: 30_000,
         });
+        
+        // Prevent idle client errors from crashing the Node.js process
+        pool.on('error', (err: Error) => {
+          console.error('[DB Pool Error] Unexpected error on idle client', err);
+        });
+        
         return drizzle(pool, { schema });
       },
     },

@@ -1,11 +1,17 @@
 import { z } from 'zod';
 
-// Standard email + password login (web/manager portal)
+// Standard email + password login (web/manager portal).
+// staffId is accepted so roster-picked staff can password-login without the
+// public roster ever exposing their email address.
 export const LoginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().email().optional(),
+  staffId: z.string().uuid().optional(),
   password: z.string().min(6),
   storeId: z.string().uuid().optional(),
-});
+}).refine(
+  (data) => data.email || data.staffId,
+  { message: 'Provide either email or staffId', path: ['email'] },
+);
 
 // PIN login — POS touchscreen cashier login
 export const PinLoginSchema = z.object({

@@ -50,14 +50,15 @@ const safeSelect = {
   updatedAt: staffProfile.updatedAt,
 };
 
-// Minimal roster select for the PUBLIC PIN-login picker — no PII beyond what
-// the login screen needs to render staff cards and resolve an email lookup.
+// Minimal roster select for the PUBLIC PIN-login picker — only what the
+// login screen needs to render staff cards. Email is intentionally excluded:
+// the stealth email entry resolves via lookupByEmail instead of scanning
+// this list, so the roster never leaks a bulk staff email directory.
 const rosterSelect = {
   id: staffProfile.id,
   storeId: staffProfile.storeId,
   firstName: staffProfile.firstName,
   lastName: staffProfile.lastName,
-  email: staffProfile.email,
   role: staffProfile.role,
   avatarUrl: staffProfile.avatarUrl,
   requiresPinChange: staffProfile.requiresPinChange,
@@ -104,6 +105,28 @@ export class StaffService {
         ),
       )
       .orderBy(staffProfile.firstName);
+  }
+
+  // Resolve a single staff record by email for the stealth login entry.
+  // Searches across all stores (super_admin may sit outside the default
+  // roster's store). Returns null when not found — the caller must not
+  // distinguish "unknown email" from "inactive account" in its response.
+  async lookupByEmail(email: string) {
+    const [found] = await this.db
+      .select({
+        ...rosterSelect,
+        email: staffProfile.email,
+      })
+      .from(staffProfile)
+      .where(
+        and(
+          sql`lower(${staffProfile.email}) = lower(${email.trim()})`,
+          eq(staffProfile.isActive, true),
+          sql`${staffProfile.role}::text <> 'customer'`,
+        ),
+      )
+      .limit(1);
+    return found ?? null;
   }
 
   async getById(id: string, storeId?: string) {

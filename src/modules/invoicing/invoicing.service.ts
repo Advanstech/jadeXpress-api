@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { invoices, invoiceItems } from '../../database/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 
 @Injectable()
 export class InvoicingService {
@@ -17,9 +17,11 @@ export class InvoicingService {
     });
   }
 
-  async getInvoiceById(id: string) {
+  async getInvoiceById(id: string, storeId?: string) {
     const invoice = await this.db.query.invoices.findFirst({
-      where: eq(invoices.id, id),
+      where: storeId
+        ? and(eq(invoices.id, id), eq(invoices.storeId, storeId))
+        : eq(invoices.id, id),
       with: {
         customer: true,
         createdBy: true,
@@ -69,13 +71,17 @@ export class InvoicingService {
     return await this.getInvoiceById(invoice.id);
   }
 
-  async updateInvoiceStatus(id: string, status: string) {
-    const [updated] = await this.db.update(invoices).set({ status }).where(eq(invoices.id, id)).returning();
+  async updateInvoiceStatus(id: string, status: string, storeId?: string) {
+    const conditions = storeId
+      ? and(eq(invoices.id, id), eq(invoices.storeId, storeId))
+      : eq(invoices.id, id);
+    const [updated] = await this.db.update(invoices).set({ status }).where(conditions).returning();
+    if (!updated) throw new NotFoundException('Invoice not found');
     return updated;
   }
 
-  async recordPayment(id: string, amountPesewas: number) {
-    const invoice = await this.getInvoiceById(id);
+  async recordPayment(id: string, amountPesewas: number, storeId?: string) {
+    const invoice = await this.getInvoiceById(id, storeId);
     const newPaid = invoice.amountPaidPesewas + amountPesewas;
     const newStatus = newPaid >= invoice.totalPesewas ? 'paid' : 'sent';
     

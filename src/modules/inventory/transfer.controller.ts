@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Put, Body, Param, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { TransferService } from './transfer.service';
 import { CreateTransferDto, TransferApprovalDto } from './dto/transfer.dto';
 
@@ -30,6 +31,7 @@ export class TransferController {
   }
 
   @Put(':id/approve')
+  @Roles('manager', 'supervisor', 'owner')
   @ApiOperation({ summary: 'Approve a stock transfer and sync inventory' })
   async approveTransfer(
     @Param('id') id: string,
@@ -40,6 +42,7 @@ export class TransferController {
   }
 
   @Put(':id/reject')
+  @Roles('manager', 'supervisor', 'owner')
   @ApiOperation({ summary: 'Reject a pending stock transfer' })
   async rejectTransfer(
     @Param('id') id: string,

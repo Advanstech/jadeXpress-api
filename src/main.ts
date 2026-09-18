@@ -46,12 +46,21 @@ async function bootstrap() {
 
     // ── Rate limiting ──────────────────────────────────────────────────────
     await app.register(fastifyRateLimit, {
-      max: (req) =>
-        // Stricter buckets for auth (brute force) and AI (paid upstream calls)
-        req.url?.startsWith(`/${apiPrefix}/auth/`) ||
-        req.url?.startsWith(`/${apiPrefix}/ai/`)
-          ? 20
-          : 300,
+      max: (req) => {
+        // Stricter buckets for auth (brute force), AI (paid upstream calls)
+        // and the staff email lookup (enumeration surface).
+        if (
+          req.url?.startsWith(`/${apiPrefix}/auth/`) ||
+          req.url?.startsWith(`/${apiPrefix}/ai/`) ||
+          req.url?.startsWith(`/${apiPrefix}/staff/lookup`)
+        ) {
+          return 20;
+        }
+        // Payments are public (storefront checkout) but hitting upstream
+        // providers costs money and spams customer phones — keep it tight.
+        if (req.url?.startsWith(`/${apiPrefix}/payments/`)) return 30;
+        return 300;
+      },
       timeWindow: '1 minute',
       allowList: ['127.0.0.1'],
     });

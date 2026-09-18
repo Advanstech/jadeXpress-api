@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq, ilike, or, desc, sql, and, lte, inArray } from 'drizzle-orm';
+import { eq, ilike, or, desc, sql, and, lte, inArray, isNull } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { customers, loyaltyTransactions, sales, saleItems } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
@@ -10,10 +10,17 @@ export class CustomersService {
   constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
 
   async list(query: PaginationDto & { storeId?: string; segment?: string }) {
-    const { page, limit, search } = query;
+    const { page, limit, search, storeId } = query;
     const offset = (page - 1) * limit;
 
     const conditions: any[] = [eq(customers.isActive, true)];
+    // Scope to the caller's store — customers with no home store
+    // (storeId IS NULL) are multi-store and visible everywhere.
+    if (storeId) {
+      conditions.push(
+        or(eq(customers.storeId, storeId), isNull(customers.storeId)),
+      );
+    }
     if (search) {
       conditions.push(
         or(
@@ -94,6 +101,11 @@ export class CustomersService {
   async nlSearch(query: string, storeId?: string) {
     // Parse simple patterns synchronously as fallback
     const conditions: any[] = [eq(customers.isActive, true)];
+    if (storeId) {
+      conditions.push(
+        or(eq(customers.storeId, storeId), isNull(customers.storeId)),
+      );
+    }
 
     // Pattern: "hasn't visited in X days"
     const lapsedMatch = query.match(/(\d+)\s*days?/i);

@@ -702,21 +702,38 @@ Respond with JSON ONLY in this exact shape:
     const fallbackKey = process.env.OPENAI_API_KEY;
     const apiKey = openaiKey || fallbackKey;
 
-    const categoryHint = category ? `, ${category} product` : ', pharmaceutical supplement';
-    const descHint = description ? `. ${description}` : '';
-    const prompt = `Professional product photography of ${productName}${categoryHint}${descHint}. Studio lighting, clean white background, sharp focus, high resolution, commercial product shot style. Show the actual product packaging or bottle clearly. Do not include random background elements.`;
+    const categoryHint = category ? `This is a ${category} product.` : 'This is a pharmaceutical supplement.';
+    const descHint = description ? `Description: ${description}` : categoryHint;
+    const prompt = `Professional product photography of a physical retail product packaging (like a supplement bottle, box, or jar) for a product named exactly "${productName}". The label on the packaging MUST prominently display the text "${productName}". ${descHint}. Studio lighting, clean white background, sharp focus, high resolution, commercial product shot style. It must look like a real physical branded item on a pure white background. Do not show raw ingredients, loose capsules, leaves, or abstract concepts — ONLY show the sealed retail packaging.`;
 
-    // Free, key-less AI image generator — used as primary when no OpenAI key
-    // and as a graceful fallback when DALL-E fails (quota, invalid key, etc.).
+    // Free, key-less AI image generator (Stable Diffusion)
     const pollinations = () => {
       const seed = Math.floor(Math.random() * 1000000);
       const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=800&height=800&nologo=true&seed=${seed}`;
       return { imageUrl: url, model: 'pollinations-ai' };
     };
 
-    if (!apiKey || apiKey.length < 10) {
-      console.log('[AI IMAGE GEN] No OpenAI key — using Pollinations AI');
+    // Scrapes actual product photos online instead of AI generation
+    const searchOnline = async () => {
+      try {
+        const query = encodeURIComponent(`${productName} product photo white background`);
+        const res = await fetch(`https://www.bing.com/images/search?q=${query}`, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        });
+        const html = await res.text();
+        const urls = [...html.matchAll(/murl&quot;:&quot;(https:\/\/[^&]+?\.(?:jpg|png|jpeg))&quot;/gi)].map(m => m[1]);
+        if (urls.length > 0) {
+          return { imageUrl: urls[0], model: 'bing-image-search' };
+        }
+      } catch (err) {
+        console.error('[AI IMAGE GEN] Bing scraper failed', err);
+      }
       return pollinations();
+    };
+
+    if (!apiKey || apiKey.length < 10) {
+      console.log('[AI IMAGE GEN] No OpenAI key — searching product online instead of generating');
+      return searchOnline();
     }
 
     try {
@@ -739,8 +756,8 @@ Respond with JSON ONLY in this exact shape:
         model: 'dall-e-3',
       };
     } catch (err: any) {
-      console.error('[AI IMAGE GEN ERROR] DALL-E failed, falling back to Pollinations AI:', err?.message || err);
-      return pollinations();
+      console.error('[AI IMAGE GEN ERROR] DALL-E failed, falling back to online search:', err?.message || err);
+      return searchOnline();
     }
   }
 

@@ -34,6 +34,14 @@ export class StaffController {
     return this.staffService.getRoster(storeId);
   }
 
+  @Get('lookup')
+  @Public()
+  @ApiOperation({ summary: 'Resolve one staff record by email (stealth login entry)' })
+  async lookupByEmail(@Query('email') email?: string) {
+    if (!email) return null;
+    return this.staffService.lookupByEmail(email);
+  }
+
   @Get('shift/active')
   @ApiOperation({ summary: 'Get current open shift for logged-in staff' })
   getActiveShift(@CurrentUser() user: JwtPayload) {
