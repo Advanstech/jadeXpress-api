@@ -35,6 +35,11 @@ export default () => ({
     apiKey: process.env.CLOUDINARY_API_KEY,
     apiSecret: process.env.CLOUDINARY_API_SECRET,
   },
+  storefront: {
+    // Physical store that fulfils online orders — its stockItems pool is what
+    // the storefront sells from. Unset = first active store.
+    storeId: process.env.STOREFRONT_STORE_ID,
+  },
   payments: {
     paystackSecretKey: process.env.PAYSTACK_SECRET_KEY,
     paystackPublicKey: process.env.PAYSTACK_PUBLIC_KEY,

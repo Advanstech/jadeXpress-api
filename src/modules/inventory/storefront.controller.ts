@@ -34,6 +34,13 @@ export class StorefrontController {
   }
 
   @Public()
+  @Get('stores')
+  @ApiOperation({ summary: 'Public list of active stores (pickup/transfer UI)' })
+  getPublicStores() {
+    return this.inventoryService.getPublicStores();
+  }
+
+  @Public()
   @Get('categories/slug/:slug')
   @ApiOperation({ summary: 'Public category details by slug with alias resolution' })
   getPublicCategoryBySlug(@Param('slug') slug: string) {

@@ -14,6 +14,7 @@ import {
   stockBatches,
   stockMovements,
   stockAlerts,
+  stores,
 } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type {
@@ -53,6 +54,24 @@ export class InventoryService {
 
   async getPublicCategories() {
     return this.db.select().from(categories).where(eq(categories.isActive, true)).orderBy(asc(categories.name)).limit(500);
+  }
+
+  // Minimal public store directory — used by the storefront (pickup/transfer
+  // UI). No internal fields, only what a customer-facing page needs.
+  async getPublicStores() {
+    return this.db
+      .select({
+        id: stores.id,
+        code: stores.code,
+        name: stores.name,
+        address: stores.address,
+        city: stores.city,
+        phone: stores.phone,
+        email: stores.email,
+      })
+      .from(stores)
+      .where(eq(stores.status, 'active'))
+      .orderBy(asc(stores.name));
   }
 
   async getPublicCategoryBySlug(slug: string) {
