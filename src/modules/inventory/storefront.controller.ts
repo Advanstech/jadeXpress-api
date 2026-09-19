@@ -15,6 +15,7 @@ const ProductQuerySchema = PaginationSchema.extend({
   maxPrice: z.coerce.number().int().optional(),
   featured: z.coerce.boolean().optional(),
   bestseller: z.coerce.boolean().optional(),
+  inStock: z.coerce.boolean().optional(),
   sort: z.enum(['featured', 'price-asc', 'price-desc', 'rating', 'newest']).optional(),
 });
 

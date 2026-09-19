@@ -30,6 +30,9 @@ export const CreateProductSchema = z.object({
   maxStockLevel: z.number().int().min(0).optional().nullable(),
   tags: z.array(z.string()).default([]),
   expiryDate: z.string().optional().nullable(),
+  // Storefront merchandising flags — surfaced on enter_ homepage/shop sections
+  isFeatured: z.boolean().optional(),
+  isBestseller: z.boolean().optional(),
 });
 
 export const UpdateProductSchema = CreateProductSchema.partial();

@@ -175,12 +175,13 @@ export class InventoryService {
       maxPrice?: number;
       featured?: boolean;
       bestseller?: boolean;
+      inStock?: boolean;
       sort?: 'featured' | 'price-asc' | 'price-desc' | 'rating' | 'newest';
     },
   ) {
     const {
       page = 1, limit = 20, search, type, categoryId, categorySlug,
-      brand, maxPrice, featured, bestseller, sort,
+      brand, maxPrice, featured, bestseller, inStock, sort,
     } = query;
     const offset = (page - 1) * limit;
 
@@ -219,8 +220,12 @@ export class InventoryService {
       .leftJoin(stockItems, eq(stockItems.productId, products.id))
       .where(whereClause)
       .groupBy(products.id, categories.id)
-      .limit(limit)
-      .offset(offset) as any;
+      .$dynamic();
+    // $dynamic lets us append .having()/.orderBy() conditionally
+
+    if (inStock) {
+      query$ = query$.having(sql`COALESCE(SUM(${stockItems.quantityOnHand}), 0) > 0`);
+    }
 
     switch (sort) {
       case 'price-asc':
@@ -236,14 +241,35 @@ export class InventoryService {
         query$ = query$.orderBy(desc(products.createdAt));
         break;
       default:
-        query$ = query$.orderBy(desc(products.isFeatured), desc(products.createdAt));
+        // Shop default: buyable products first, then curated, then newest —
+        // keeps pages of out-of-stock items off the storefront's first view.
+        query$ = query$.orderBy(
+          sql`(COALESCE(SUM(${stockItems.quantityOnHand}), 0) > 0) DESC`,
+          desc(products.isFeatured),
+          desc(products.createdAt),
+        );
     }
+    query$ = query$.limit(limit).offset(offset);
 
-    const countQuery$ = this.db
-      .select({ count: sql<number>`count(*)` })
-      .from(products)
-      .leftJoin(categories, eq(products.categoryId, categories.id))
-      .where(whereClause);
+    const countQuery$ = inStock
+      ? this.db
+          .select({ count: sql<number>`count(*)` })
+          .from(
+            this.db
+              .select({ id: products.id })
+              .from(products)
+              .leftJoin(categories, eq(products.categoryId, categories.id))
+              .leftJoin(stockItems, eq(stockItems.productId, products.id))
+              .where(whereClause)
+              .groupBy(products.id)
+              .having(sql`COALESCE(SUM(${stockItems.quantityOnHand}), 0) > 0`)
+              .as('in_stock_products'),
+          )
+      : this.db
+          .select({ count: sql<number>`count(*)` })
+          .from(products)
+          .leftJoin(categories, eq(products.categoryId, categories.id))
+          .where(whereClause);
 
     const [data, countResult] = await Promise.all([query$, countQuery$]);
 
