@@ -39,8 +39,14 @@ export const ChangePinSchema = z.object({
   newPin: z.string().trim().min(4).max(6).regex(/^\d+$/, 'PIN must be numeric'),
 });
 
+export const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(6, 'Current password is required'),
+  newPassword: z.string().min(8, 'New password must be at least 8 characters'),
+});
+
 export type LoginDto = z.infer<typeof LoginSchema>;
 export type PinLoginDto = z.infer<typeof PinLoginSchema>;
 export type PinVerifyDto = z.infer<typeof PinVerifySchema>;
 export type RefreshTokenDto = z.infer<typeof RefreshTokenSchema>;
 export type ChangePinDto = z.infer<typeof ChangePinSchema>;
+export type ChangePasswordDto = z.infer<typeof ChangePasswordSchema>;

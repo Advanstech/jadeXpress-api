@@ -21,5 +21,10 @@ export const CloseEodSchema = z.object({
   varianceNotes: z.string().optional(),
 });
 
+export const RejectEodSchema = z.object({
+  reason: z.string().min(1, 'A rejection reason is required'),
+});
+
 export type InitEodDto = z.infer<typeof InitEodSchema>;
 export type CloseEodDto = z.infer<typeof CloseEodSchema>;
+export type RejectEodDto = z.infer<typeof RejectEodSchema>;

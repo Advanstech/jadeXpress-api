@@ -259,7 +259,7 @@ export class EodService {
     return updated;
   }
 
-  async rejectEod(id: string, rejectedById: string, storeId: string) {
+  async rejectEod(id: string, rejectedById: string, storeId: string, reason?: string) {
     const [eod] = await this.db
       .select()
       .from(eodRecords)
@@ -288,7 +288,12 @@ export class EodService {
       action: 'EOD_REJECTED',
       entityType: 'eod_record',
       entityId: eod.id,
-      newData: { businessDate: eod.businessDate, cashVariance: eod.cashVariance, momoVariance: eod.momoVariance },
+      newData: {
+        businessDate: eod.businessDate,
+        cashVariance: eod.cashVariance,
+        momoVariance: eod.momoVariance,
+        reason: reason ?? null,
+      },
     });
 
     this.realtime.broadcastToStore(eod.storeId, 'eod:rejected', {

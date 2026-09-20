@@ -10,9 +10,11 @@ const ROLE_HIERARCHY: Record<AppRole, number> = {
   super_admin: 9,
   owner: 5,
   manager: 4,
+  head_pharmacist: 4, // same authority level as manager for pharmacy ops
   supervisor: 3,
   pharmacist: 3,
   stock_officer: 2,
+  chemical: 1,
   cashier: 1,
 };
 

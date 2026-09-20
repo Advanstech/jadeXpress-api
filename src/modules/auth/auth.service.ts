@@ -9,12 +9,12 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { eq, and, isNull, lt } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
-import { createHash, randomUUID } from 'crypto';
+import { createHash, randomUUID, randomInt } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { staffProfile, refreshTokens, otpTokens, auditLogs } from '../../database/schema';
 import { JwtPayload } from '../../common/decorators/current-user.decorator';
-import type { LoginDto, PinLoginDto, PinVerifyDto, ChangePinDto } from './dto/auth.dto';
+import type { LoginDto, PinLoginDto, PinVerifyDto, ChangePinDto, ChangePasswordDto } from './dto/auth.dto';
 
 import { EmailService } from '../email/email.service';
 
@@ -248,7 +248,7 @@ export class AuthService {
   }
 
   // ── Password Change ─────────────────────────────────────────────────────────
-  async changePassword(staffId: string, storeId: string, dto: any) { // using any for brevity here, should be ChangePasswordDto
+  async changePassword(staffId: string, storeId: string, dto: ChangePasswordDto) {
     const [staff] = await this.db
       .select()
       .from(staffProfile)
@@ -297,7 +297,7 @@ export class AuthService {
       return { success: true };
     }
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpCode = randomInt(100000, 1000000).toString();
     const codeHash = await bcrypt.hash(otpCode, 12);
 
     // Log OTP to server console in development only — never leak codes in prod logs

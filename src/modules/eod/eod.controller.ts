@@ -5,7 +5,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { PaginationSchema } from '../../common/dto/pagination.dto';
-import { InitEodSchema, InitEodDto, CloseEodSchema, CloseEodDto } from './dto/eod.dto';
+import { InitEodSchema, InitEodDto, CloseEodSchema, CloseEodDto, RejectEodSchema, RejectEodDto } from './dto/eod.dto';
 
 @ApiTags('eod')
 @ApiBearerAuth()
@@ -62,7 +62,11 @@ export class EodController {
   @Post(':id/reject')
   @Roles('manager', 'supervisor', 'owner')
   @ApiOperation({ summary: 'Reject a pending or discrepancy EOD' })
-  rejectEod(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.eodService.rejectEod(id, user.sub, user.storeId);
+  rejectEod(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(RejectEodSchema)) dto: RejectEodDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.eodService.rejectEod(id, user.sub, user.storeId, dto.reason);
   }
 }
