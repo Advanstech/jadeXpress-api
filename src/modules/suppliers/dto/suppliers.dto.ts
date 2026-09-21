@@ -23,6 +23,10 @@ export const PurchaseOrderItemSchema = z.object({
   unitCostPesewas: z.number().int().min(0),
   batchNumber: z.string().max(100).optional(),
   expiryDate: z.string().date().optional(),
+  // True when the invoice wizard created this product for this invoice.
+  // Stamps product.created_by_purchase_order_id so invoice deletion can
+  // remove products the invoice brought without touching pre-existing ones.
+  isNew: z.boolean().optional(),
 });
 
 export const CreatePurchaseOrderSchema = z.object({

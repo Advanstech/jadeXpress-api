@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
-import { eq, and, or, desc, sql, ilike, inArray, sum } from 'drizzle-orm';
+import { eq, and, or, desc, sql, ilike, inArray, isNull, sum, ne } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
   suppliers,
@@ -12,6 +12,14 @@ import {
   categories,
   ledgerEntries,
   staffProfile,
+  saleItems,
+  refundItems,
+  storefrontOrderItems,
+  stockTransferItems,
+  stockAlerts,
+  rxItems,
+  demandForecasts,
+  coPurchasePatterns,
 } from '../../database/schema';
 import { getTableColumns } from 'drizzle-orm';
 import { products } from '../../database/schema/inventory';
@@ -281,6 +289,20 @@ export class SuppliersService {
         })),
       ).returning();
 
+      // Stamp provenance on products the wizard created for this invoice so
+      // deleteInvoice can remove them without touching pre-existing catalog
+      // items. Only stamp when unset — never steal provenance from an
+      // earlier PO if the same product is re-flagged.
+      const newProductIds = dto.items.filter((i) => i.isNew).map((i) => i.productId);
+      if (newProductIds.length > 0) {
+        await tx.update(products)
+          .set({ createdByPurchaseOrderId: po.id })
+          .where(and(
+            inArray(products.id, newProductIds),
+            isNull(products.createdByPurchaseOrderId),
+          ));
+      }
+
       if (dto.invoiceNumber) {
         await tx.insert(supplierInvoices).values({
           invoiceNumber: dto.invoiceNumber,
@@ -320,8 +342,129 @@ export class SuppliersService {
         if (po && storeId && po.storeId !== storeId) {
           throw new NotFoundException('Invoice not found');
         }
-        if (po && (po.status === 'received' || po.paymentStatus === 'paid' || po.paymentStatus === 'partial')) {
-          throw new BadRequestException('Cannot delete invoice because the associated purchase order has already been received or paid');
+
+        // The upload wizard auto-receives goods, which used to make every
+        // wizard invoice permanently undeletable. Instead of blocking, we
+        // REVERSE the receipt — but only when none of the stock was sold.
+        if (po) {
+          if (po.paymentStatus === 'paid' || po.paymentStatus === 'partial') {
+            throw new BadRequestException('Cannot delete invoice because payments were recorded against its purchase order');
+          }
+
+          const items = await tx
+            .select()
+            .from(purchaseItems)
+            .where(eq(purchaseItems.purchaseOrderId, po.id));
+          const anyReceived = items.some((i) => i.quantityReceived > 0);
+
+          if (anyReceived) {
+            // 1. Safety: every unit received must still be on the shelf.
+            for (const item of items) {
+              if (item.quantityReceived <= 0) continue;
+              const [stock] = await tx
+                .select()
+                .from(stockItems)
+                .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, po.storeId)))
+                .limit(1);
+              const available = stock?.quantityOnHand ?? 0;
+              if (available < item.quantityReceived) {
+                throw new ConflictException(
+                  `Cannot delete: stock from this invoice has been sold or adjusted (product ${item.productId} — received ${item.quantityReceived}, only ${available} on hand). Reverse the sales first.`,
+                );
+              }
+            }
+
+            // 2. Safety: batches must be unconsumed (nothing sold from them).
+            const batches = await tx
+              .select()
+              .from(stockBatches)
+              .where(eq(stockBatches.purchaseOrderId, po.id));
+            for (const b of batches) {
+              if (b.quantityRemaining < b.quantityReceived) {
+                throw new ConflictException(
+                  'Cannot delete: stock batches from this invoice have been partially sold',
+                );
+              }
+            }
+
+            // 3. Reverse the receipt — decrement stock, drop movements + batches.
+            for (const item of items) {
+              if (item.quantityReceived <= 0) continue;
+              await tx
+                .update(stockItems)
+                .set({
+                  quantityOnHand: sql`GREATEST(${stockItems.quantityOnHand} - ${item.quantityReceived}, 0)`,
+                  lastMovementAt: new Date(),
+                  updatedAt: new Date(),
+                })
+                .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, po.storeId)));
+            }
+            await tx
+              .delete(stockMovements)
+              .where(and(eq(stockMovements.referenceType, 'purchase'), eq(stockMovements.referenceId, po.id)));
+            await tx.delete(stockBatches).where(eq(stockBatches.purchaseOrderId, po.id));
+          }
+        }
+
+        // Products whose ENTIRE existence is this invoice are removed with
+        // it. Primary rule: the product carries this PO's provenance stamp
+        // (created_by_purchase_order_id — set by the wizard for items it
+        // created). Legacy invoices predate the stamp, so unstamped items
+        // fall back to a tight heuristic: primary supplier matches AND the
+        // product was created within the same window as the PO AND it has
+        // no other life (no other POs, sales, batches, movements…).
+        // Existing products keep their catalog entry; only stock reverses.
+        const poProducts = await tx
+          .selectDistinct({ productId: purchaseItems.productId })
+          .from(purchaseItems)
+          .where(eq(purchaseItems.purchaseOrderId, po.id));
+        for (const { productId } of poProducts) {
+          if (!productId) continue;
+          const [product] = await tx
+            .select({
+              id: products.id,
+              createdByPurchaseOrderId: products.createdByPurchaseOrderId,
+              primarySupplierId: products.primarySupplierId,
+              createdAt: products.createdAt,
+            })
+            .from(products)
+            .where(eq(products.id, productId))
+            .limit(1);
+          if (!product) continue;
+
+          const stamped = product.createdByPurchaseOrderId === po.id;
+          const legacyWizardCreated =
+            !stamped &&
+            product.createdByPurchaseOrderId === null &&
+            product.primarySupplierId === po.supplierId &&
+            po.createdAt != null &&
+            Math.abs(product.createdAt.getTime() - po.createdAt.getTime()) < 60 * 60 * 1000;
+          if (!stamped && !legacyWizardCreated) continue;
+
+          const [otherPo, anySale, anyRefund, anyStorefront, anyTransfer, anyRx,
+            anyBatch, anyMovement, anyForecast, anyCoPatternA, anyCoPatternB] = await Promise.all([
+            tx.select({ id: purchaseItems.id }).from(purchaseItems)
+              .where(and(eq(purchaseItems.productId, productId), ne(purchaseItems.purchaseOrderId, po.id))).limit(1),
+            tx.select({ id: saleItems.id }).from(saleItems).where(eq(saleItems.productId, productId)).limit(1),
+            tx.select({ id: refundItems.id }).from(refundItems).where(eq(refundItems.productId, productId)).limit(1),
+            tx.select({ id: storefrontOrderItems.id }).from(storefrontOrderItems).where(eq(storefrontOrderItems.productId, productId)).limit(1),
+            tx.select({ id: stockTransferItems.id }).from(stockTransferItems).where(eq(stockTransferItems.productId, productId)).limit(1),
+            tx.select({ id: rxItems.id }).from(rxItems).where(eq(rxItems.productId, productId)).limit(1),
+            tx.select({ id: stockBatches.id }).from(stockBatches).where(eq(stockBatches.productId, productId)).limit(1),
+            tx.select({ id: stockMovements.id }).from(stockMovements).where(eq(stockMovements.productId, productId)).limit(1),
+            tx.select({ id: demandForecasts.id }).from(demandForecasts).where(eq(demandForecasts.productId, productId)).limit(1),
+            tx.select({ id: coPurchasePatterns.id }).from(coPurchasePatterns).where(eq(coPurchasePatterns.productAId, productId)).limit(1),
+            tx.select({ id: coPurchasePatterns.id }).from(coPurchasePatterns).where(eq(coPurchasePatterns.productBId, productId)).limit(1),
+          ]);
+          const hasOtherLife = [
+            otherPo, anySale, anyRefund, anyStorefront, anyTransfer, anyRx,
+            anyBatch, anyMovement, anyForecast, anyCoPatternA, anyCoPatternB,
+          ].some((rows) => rows.length > 0);
+          if (hasOtherLife) continue;
+
+          await tx.delete(stockAlerts).where(eq(stockAlerts.productId, productId));
+          await tx.delete(stockItems).where(eq(stockItems.productId, productId));
+          await tx.delete(products).where(eq(products.id, productId));
         }
       }
 
@@ -333,7 +476,10 @@ export class SuppliersService {
         await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, invoice.purchaseOrderId));
       }
 
-      return { success: true, message: 'Invoice and associated records deleted successfully' };
+      return {
+        success: true,
+        message: 'Invoice deleted — stock reversed, and any products this invoice created were removed',
+      };
     });
   }
 

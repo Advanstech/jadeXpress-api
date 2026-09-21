@@ -93,7 +93,13 @@ export class AuthService {
 
     const now = new Date();
     if (staff.pinLockedUntil && new Date(staff.pinLockedUntil) > now) {
-      throw new UnauthorizedException('Account locked due to too many failed PIN attempts');
+      const minutesLeft = Math.max(
+        1,
+        Math.ceil((new Date(staff.pinLockedUntil).getTime() - now.getTime()) / 60000),
+      );
+      throw new UnauthorizedException(
+        `Account is temporarily locked after too many failed PIN attempts. Try again in ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'}.`,
+      );
     }
 
     const valid = await bcrypt.compare(dto.pin.trim(), staff.pinHash);

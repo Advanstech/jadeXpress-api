@@ -35,7 +35,7 @@ import {
 } from './enums';
 import { stores } from './organisation';
 import { staffProfile } from './staff';
-import { suppliers } from './suppliers';
+import { suppliers, purchaseOrders } from './suppliers';
 
 // ─── Category ─────────────────────────────────────────────────────────────────
 export const categories = pgTable('category', {
@@ -67,6 +67,13 @@ export const products = pgTable(
     shortDescription: varchar('short_description', { length: 500 }),
     categoryId: uuid('category_id').references(() => categories.id),
     primarySupplierId: uuid('primary_supplier_id').references(() => suppliers.id),
+    // Provenance: set when the supplier-invoice wizard created this product
+    // for a specific PO. Lets invoice deletion distinguish "product brought
+    // by this invoice" (delete it) from pre-existing catalog items (keep it).
+    // set null — if a stamped product legitimately survives PO deletion, the
+    // marker clears instead of blocking the delete.
+    createdByPurchaseOrderId: uuid('created_by_purchase_order_id')
+      .references(() => purchaseOrders.id, { onDelete: 'set null' }),
     type: productTypeEnum('type').notNull().default('supplement'),
     status: productStatusEnum('status').notNull().default('active'),
 
