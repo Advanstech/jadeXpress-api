@@ -103,6 +103,8 @@ export class InventoryService {
           ilike(products.name, `%${search}%`),
           ilike(products.sku, `%${search}%`),
           ilike(products.barcode, `%${search}%`),
+          ilike(products.brand ?? '', `%${search}%`),
+          ilike(products.genericName ?? '', `%${search}%`),
         ) as ReturnType<typeof eq>,
       );
     }

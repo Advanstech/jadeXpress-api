@@ -387,17 +387,27 @@ export class SuppliersService {
               }
             }
 
-            // 3. Reverse the receipt — decrement stock, drop movements + batches.
-            for (const item of items) {
-              if (item.quantityReceived <= 0) continue;
+            // 3. Reverse the receipt by what THIS PO's batches still hold —
+            // never by quantityReceived. When several POs supplied the same
+            // product, reversing the nominal received figure silently eats the
+            // other POs' stock (this is what zeroed MUBAUNDI's on-hand in prod).
+            const reversalByProduct = new Map<string, number>();
+            for (const b of batches) {
+              if (b.quantityRemaining <= 0) continue;
+              reversalByProduct.set(
+                b.productId,
+                (reversalByProduct.get(b.productId) ?? 0) + b.quantityRemaining,
+              );
+            }
+            for (const [productId, qty] of reversalByProduct) {
               await tx
                 .update(stockItems)
                 .set({
-                  quantityOnHand: sql`GREATEST(${stockItems.quantityOnHand} - ${item.quantityReceived}, 0)`,
+                  quantityOnHand: sql`GREATEST(${stockItems.quantityOnHand} - ${qty}, 0)`,
                   lastMovementAt: new Date(),
                   updatedAt: new Date(),
                 })
-                .where(and(eq(stockItems.productId, item.productId), eq(stockItems.storeId, po.storeId)));
+                .where(and(eq(stockItems.productId, productId), eq(stockItems.storeId, po.storeId)));
             }
             await tx
               .delete(stockMovements)
