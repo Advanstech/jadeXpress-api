@@ -11,6 +11,7 @@
 import { Injectable, Inject, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { eq, and, or, desc } from 'drizzle-orm';
+import sharp from 'sharp';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
   products,
@@ -706,24 +707,50 @@ Respond with JSON ONLY in this exact shape:
     const descHint = description ? `Description: ${description}` : categoryHint;
     const prompt = `Professional product photography of a physical retail product packaging (like a supplement bottle, box, or jar) for a product named exactly "${productName}". The label on the packaging MUST prominently display the text "${productName}". ${descHint}. Studio lighting, clean white background, sharp focus, high resolution, commercial product shot style. It must look like a real physical branded item on a pure white background. Do not show raw ingredients, loose capsules, leaves, or abstract concepts — ONLY show the sealed retail packaging.`;
 
-    // Free, key-less AI image generator (Stable Diffusion)
+    // Stable Diffusion / Flux respond to short keyword-style prompts, not the
+    // verbose DALL-E prompt — a long sentence makes the model drift into
+    // people/scenery ("Perfectil" -> a woman). Keep it tight and negative-list
+    // the failure modes we actually saw: humans, hands, buildings, scenery.
+    const sdPrompt = [
+      `studio product photograph of "${productName}" retail packaging`,
+      category ? `${category} product` : 'supplement product',
+      'sealed bottle or box, centered front view',
+      'plain pure white background, e-commerce product shot',
+      'sharp focus, professional studio lighting',
+      'no people, no hands, no faces, no buildings, no scenery, no text overlays',
+    ].join(', ');
+
+    // Free, key-less AI image generator. model=flux adheres to the prompt far
+    // better than the default SD checkpoint for text-accurate product shots.
     const pollinations = () => {
       const seed = Math.floor(Math.random() * 1000000);
-      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=800&height=800&nologo=true&seed=${seed}`;
-      return { imageUrl: url, model: 'pollinations-ai' };
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(sdPrompt)}?width=800&height=800&nologo=true&model=flux&seed=${seed}`;
+      return { imageUrl: url, model: 'pollinations-flux' };
     };
 
-    // Scrapes actual product photos online instead of AI generation
+    // Scrapes actual product photos online instead of AI generation.
+    // Prefer manufacturer/retailer domains — a blind first-hit was returning
+    // lifestyle shots (people, storefronts) instead of the packshot.
     const searchOnline = async () => {
       try {
-        const query = encodeURIComponent(`${productName} product photo white background`);
-        const res = await fetch(`https://www.bing.com/images/search?q=${query}`, {
+        const query = encodeURIComponent(`${productName} product packshot`);
+        const res = await fetch(`https://www.bing.com/images/search?q=${query}&form=HDRSC2`, {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
         });
         const html = await res.text();
         const urls = [...html.matchAll(/murl&quot;:&quot;(https:\/\/[^&]+?\.(?:jpg|png|jpeg))&quot;/gi)].map(m => m[1]);
         if (urls.length > 0) {
-          return { imageUrl: urls[0], model: 'bing-image-search' };
+          const retailerHints = [
+            'iherb', 'amazon', 'ssl-images', 'shopify', 'cdn11.bigcommerce',
+            'boots', 'superdrug', 'hollandandbarrett', 'vitabiotics',
+            'pharmacy', 'chemist', 'jumia', 'healthpost', 'walmart',
+            'target', 'costco', 'ebayimg', 'alicdn',
+          ];
+          const ranked = [...urls].sort((a, b) => {
+            const score = (u: string) => retailerHints.some((h) => u.toLowerCase().includes(h)) ? 0 : 1;
+            return score(a) - score(b);
+          });
+          return { imageUrl: ranked[0], model: 'bing-image-search' };
         }
       } catch (err) {
         console.error('[AI IMAGE GEN] Bing scraper failed', err);
@@ -751,8 +778,16 @@ Respond with JSON ONLY in this exact shape:
       const b64 = response.data[0].b64_json;
       if (!b64) throw new Error('No image returned from DALL-E 3');
 
+      // Compress before storing — a 1024² PNG base64 is ~1.5MB and this string
+      // goes straight into product.image_url, which ships inside every catalog
+      // payload. JPEG at 800px keeps it in the ~100KB range.
+      const compressed = await sharp(Buffer.from(b64, 'base64'))
+        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+
       return {
-        imageUrl: `data:image/png;base64,${b64}`,
+        imageUrl: `data:image/jpeg;base64,${compressed.toString('base64')}`,
         model: 'dall-e-3',
       };
     } catch (err: any) {
