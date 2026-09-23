@@ -429,7 +429,12 @@ export class SalesService {
     const [data, [{ count }]] = await Promise.all([
       this.db.query.sales.findMany({
         where,
-        with: { cashier: true },
+        with: {
+          cashier: true,
+          items: {
+            columns: { productNameSnapshot: true, quantity: true },
+          },
+        },
         orderBy: [desc(sales.createdAt)],
         limit,
         offset,
@@ -438,6 +443,39 @@ export class SalesService {
     ]);
 
     return paginate(data, Number(count), page, limit);
+  }
+
+  /** Per-day buckets for the sales-history trend chart — completed sales only. */
+  async dailyTotals(storeId: string, query: { from?: string; to?: string }) {
+    const conditions = [eq(sales.storeId, storeId), eq(sales.status, 'completed' as any)];
+    if (query.from) conditions.push(gte(sales.createdAt, new Date(query.from)));
+    if (query.to) conditions.push(lte(sales.createdAt, new Date(query.to)));
+
+    const rows = await this.db
+      .select({
+        day: sql<string>`date_trunc('day', ${sales.createdAt})::date::text`,
+        saleCount: sql<number>`count(distinct ${sales.id})::int`,
+        revenuePesewas: sql<number>`coalesce(sum(${sales.totalPesewas}), 0)::int`,
+      })
+      .from(sales)
+      .where(and(...conditions))
+      .groupBy(sql`date_trunc('day', ${sales.createdAt})`)
+      .orderBy(sql`date_trunc('day', ${sales.createdAt})`);
+
+    const unitRows = await this.db
+      .select({
+        day: sql<string>`date_trunc('day', ${sales.createdAt})::date::text`,
+        unitsSold: sql<number>`coalesce(sum(${saleItems.quantity}), 0)::int`,
+      })
+      .from(saleItems)
+      .innerJoin(sales, eq(saleItems.saleId, sales.id))
+      .where(and(...conditions))
+      .groupBy(sql`date_trunc('day', ${sales.createdAt})`);
+
+    const unitsByDay = new Map(unitRows.map((r) => [r.day, r.unitsSold]));
+    return {
+      data: rows.map((r) => ({ ...r, unitsSold: unitsByDay.get(r.day) ?? 0 })),
+    };
   }
 
   // ── Hold Sale ─────────────────────────────────────────────────────────────

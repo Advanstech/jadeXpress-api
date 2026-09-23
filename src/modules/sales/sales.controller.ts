@@ -42,6 +42,12 @@ export class SalesController {
     return this.salesService.createSale(dto, user.sub);
   }
 
+  @Get('daily-totals')
+  @ApiOperation({ summary: 'Per-day revenue/units buckets for trend chart' })
+  dailyTotals(@CurrentUser() user: JwtPayload, @Query() query: { from?: string; to?: string }) {
+    return this.salesService.dailyTotals(user.storeId, query);
+  }
+
   @Get('held')
   @ApiOperation({ summary: 'List held (paused) sales for current store' })
   getHeldSales(@CurrentUser() user: JwtPayload) {
