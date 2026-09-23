@@ -76,3 +76,62 @@ export const eodRecordsRelations = relations(eodRecords, ({ one }) => ({
   closedBy: one(staffProfile, { fields: [eodRecords.closedById], references: [staffProfile.id] }),
   approvedBy: one(staffProfile, { fields: [eodRecords.approvedById], references: [staffProfile.id] }),
 }));
+
+/**
+ * Per-staff shift reconciliation.
+ * One record per staff member per business date — activated on login,
+ * closed by the cashier, approved by a manager. Shifts still open at
+ * 23:55+ (or from past dates) are auto-closed into pending_approval.
+ */
+export const eodShifts = pgTable(
+  'eod_shift',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeId: uuid('store_id').notNull().references(() => stores.id),
+    staffId: uuid('staff_id').notNull().references(() => staffProfile.id),
+    businessDate: date('business_date').notNull(),
+    status: varchar('status', { length: 30 }).notNull().default('in_progress'),
+
+    // System-computed totals for THIS staff member (live-recomputed at close)
+    systemCashTotal: integer('system_cash_total').notNull().default(0),
+    systemMomoTotal: integer('system_momo_total').notNull().default(0),
+    systemCardTotal: integer('system_card_total').notNull().default(0),
+    systemTotal: integer('system_total').notNull().default(0),
+    systemSaleCount: integer('system_sale_count').notNull().default(0),
+    systemRefundTotal: integer('system_refund_total').notNull().default(0),
+
+    // Physical count
+    physicalCashCount: integer('physical_cash_count').notNull().default(0),
+    denominations: jsonb('denominations')
+      .$type<Array<{ denom: number; count: number; total: number }>>()
+      .default([]),
+    momoConfirmed: integer('momo_confirmed').notNull().default(0),
+
+    cashVariance: integer('cash_variance').notNull().default(0),
+    momoVariance: integer('momo_variance').notNull().default(0),
+    varianceNotes: text('variance_notes'),
+
+    autoClosed: boolean('auto_closed').notNull().default(false),
+
+    openedAt: timestamp('opened_at', { withTimezone: true }).defaultNow().notNull(),
+    closedById: uuid('closed_by_id').references(() => staffProfile.id),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    approvedById: uuid('approved_by_id').references(() => staffProfile.id),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique('eod_shift_store_staff_date_unique').on(t.storeId, t.staffId, t.businessDate),
+    index('eod_shift_store_date_idx').on(t.storeId, t.businessDate),
+    index('eod_shift_staff_idx').on(t.staffId, t.businessDate),
+    index('eod_shift_status_idx').on(t.storeId, t.status),
+  ],
+);
+
+export const eodShiftsRelations = relations(eodShifts, ({ one }) => ({
+  store: one(stores, { fields: [eodShifts.storeId], references: [stores.id] }),
+  staff: one(staffProfile, { fields: [eodShifts.staffId], references: [staffProfile.id] }),
+  closedBy: one(staffProfile, { fields: [eodShifts.closedById], references: [staffProfile.id] }),
+  approvedBy: one(staffProfile, { fields: [eodShifts.approvedById], references: [staffProfile.id] }),
+}));

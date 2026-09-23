@@ -92,6 +92,13 @@
       "when": 1790008000000,
       "tag": "0012_product_po_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790200000000,
+      "tag": "0013_eod_shifts",
+      "breakpoints": true
     }
   ]
 }
