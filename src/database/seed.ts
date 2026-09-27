@@ -208,6 +208,21 @@ async function seed() {
   }
   supplierMap.set("SUP-7430", sup_SUP_7430.id);
 
+  let [sup_SUP_7404] = await db.select().from(suppliers).where(eq(suppliers.code, "SUP-7404")).limit(1);
+  if (!sup_SUP_7404) {
+    [sup_SUP_7404] = await db.insert(suppliers).values({
+      code: "SUP-7404",
+      name: "Angels Beauty Supplies",
+      contactPerson: "Customer Support",
+      email: "support@supplier.com",
+      phone: "+233 20 000 0000",
+      address: "Accra central",
+      city: "Accra",
+      country: "Ghana",
+    }).returning();
+  }
+  supplierMap.set("SUP-7404", sup_SUP_7404.id);
+
   let [sup_SUP_8714] = await db.select().from(suppliers).where(eq(suppliers.code, "SUP-8714")).limit(1);
   if (!sup_SUP_8714) {
     [sup_SUP_8714] = await db.insert(suppliers).values({
@@ -14123,6 +14138,54 @@ async function seed() {
       initialQty: 30,
       batchNumber: "LOT-EOSSBL47-2026",
       imageUrl: "/products/eos-shea-better-body-lotion-473ml.png",
+    },
+    {
+      sku: "SULFUR8T-YA11-I8TC-3",
+      barcode: "075610441103",
+      name: "Sulfur 8 Treatment Cream (100ml)",
+      genericName: "Medicated Original Formula Anti-Dandruff Hair & Scalp Conditioner",
+      brand: "Sulfur 8",
+      description: "Sulfur 8 Medicated Original Formula Anti-Dandruff Hair & Scalp Conditioner is a dermatologist-trusted treatment cream designed to control scalp itching and flaking associated with dandruff. Enriched with active sulfur (2%) to treat dandruff, soften dry hair, and moisturize a dry, flaky scalp. Safe for relaxed, pressed, curled, braided, and natural hair textures. 100ml (4 oz).",
+      categorySlug: "hair-care",
+      supplierCode: "SUP-7404",
+      type: 'supplement' as const,
+      costPricePesewas: 8500,
+      sellingPricePesewas: 16000,
+      unit: "jar",
+      packSize: 1,
+      dosageForm: "Treatment Cream",
+      strength: "2% Precipitated Sulfur",
+      manufacturer: "J. Strickland & Co.",
+      countryOfOrigin: "USA",
+      reorderPoint: 5,
+      reorderQty: 10,
+      initialQty: 25,
+      batchNumber: "LOT-SLF8-2026-100",
+      imageUrl: "/products/sulfur-8-treatment-cream-100ml.png",
+    },
+    {
+      sku: "SULFUR8T-YA0Z-GT1E-2",
+      barcode: "075610442100",
+      name: "Sulfur 8 Treatment Cream (200ml)",
+      genericName: "Medicated Original Formula Anti-Dandruff Hair & Scalp Conditioner",
+      brand: "Sulfur 8",
+      description: "Sulfur 8 Medicated Original Formula Anti-Dandruff Hair & Scalp Conditioner is a dermatologist-trusted treatment cream designed to control scalp itching and flaking associated with dandruff. Enriched with active sulfur (2%) to treat dandruff, soften dry hair, and moisturize a dry, flaky scalp. Safe for relaxed, pressed, curled, braided, and natural hair textures. 200ml (7.25 oz).",
+      categorySlug: "hair-care",
+      supplierCode: "SUP-7404",
+      type: 'supplement' as const,
+      costPricePesewas: 11000,
+      sellingPricePesewas: 22000,
+      unit: "jar",
+      packSize: 1,
+      dosageForm: "Treatment Cream",
+      strength: "2% Precipitated Sulfur",
+      manufacturer: "J. Strickland & Co.",
+      countryOfOrigin: "USA",
+      reorderPoint: 5,
+      reorderQty: 10,
+      initialQty: 25,
+      batchNumber: "LOT-SLF8-2026-200",
+      imageUrl: "/products/sulfur-8-treatment-cream-200ml.png",
     },
   ];
 
