@@ -50,5 +50,16 @@ export default () => ({
     momoBaseUrl:
       process.env.MOMO_BASE_URL ?? 'https://sandbox.momodeveloper.mtn.com',
     momoEnvironment: process.env.MOMO_ENVIRONMENT ?? 'sandbox',
+    stanbic: {
+      merchantId: process.env.STANBIC_MERCHANT_ID,
+      apiKey: process.env.STANBIC_API_KEY,
+      secretKey: process.env.STANBIC_SECRET_KEY,
+      baseUrl:
+        process.env.STANBIC_BASE_URL ??
+        process.env.ADVANSIS_BASE_URL ??
+        'https://api.advansistechnologies.com/v1',
+      callbackUrl: process.env.STANBIC_CALLBACK_URL,
+      webhookSecret: process.env.STANBIC_WEBHOOK_SECRET,
+    },
   },
 });

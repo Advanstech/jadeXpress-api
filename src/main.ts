@@ -34,11 +34,34 @@ async function bootstrap() {
     const corsOrigins = config.getOrThrow<string[]>('app.corsOrigins');
     const nodeEnv = config.getOrThrow<string>('app.nodeEnv');
 
-    // ── Security ───────────────────────────────────────────────────────────
+    // ── Security & Header Hardening (Veracode / Banking Compliance) ─────────
     await app.register(fastifyHelmet, {
-      contentSecurityPolicy: nodeEnv === 'production',
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          baseUri: ["'self'"],
+          fontSrc: ["'self'", 'https:', 'data:'],
+          formAction: ["'self'"],
+          frameAncestors: ["'none'"],
+          imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+          objectSrc: ["'none'"],
+          scriptSrc: ["'self'"],
+          scriptSrcAttr: ["'none'"],
+          styleSrc: ["'self'", 'https:', "'unsafe-inline'"],
+          upgradeInsecureRequests: [], // RFC spec: no value allowed (prevents Veracode 6.5 Medium error)
+        },
+      },
       crossOriginResourcePolicy: { policy: 'cross-origin' },
-      crossOriginOpenerPolicy: { policy: 'unsafe-none' },
+      crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+      hidePoweredBy: true,
+      hsts: {
+        maxAge: 63072000,
+        includeSubDomains: true,
+        preload: true,
+      },
+      referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+      xContentTypeOptions: true,
+      xFrameOptions: { action: 'deny' },
     });
 
     // ── Compression ────────────────────────────────────────────────────────
@@ -121,8 +144,15 @@ async function bootstrap() {
 
     // ── Health checks ──────────────────────────────────────────────────────
     // /health        → liveness (no dependencies — for LB uptime pings)
-    // /health/ready  → readiness (verifies DB connectivity — for deploy gates)
     const fastifyInstance = app.getHttpAdapter().getInstance();
+
+    // ── Strip Fingerprinting Headers (OWASP A5 / Veracode 3.5 Low) ─────────
+    fastifyInstance.addHook('onSend', async (_req: any, reply: any) => {
+      reply.raw.removeHeader('x-powered-by');
+      reply.raw.removeHeader('X-Powered-By');
+      reply.raw.removeHeader('server');
+      reply.raw.removeHeader('Server');
+    });
     fastifyInstance.get('/health', async () => ({
       status: 'ok',
       timestamp: new Date().toISOString(),

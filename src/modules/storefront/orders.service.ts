@@ -235,21 +235,27 @@ export class OrdersService {
     // Idempotent — replaying a successful webhook/callback is a no-op
     if (order.paymentStatus === 'paid') return order;
 
-    // SECURITY: only Paystack payments can be auto-confirmed, and only after
-    // the gateway itself verifies the reference. Anything else (e.g. MoMo)
-    // requires staff confirmation — a client saying "paid" is never enough.
-    if (gateway !== 'paystack' || !reference) {
+    // SECURITY: only verified gateways (Paystack, Stanbic, Advansis) can be auto-confirmed,
+    // and only after the gateway itself verifies the reference.
+    if (!reference || (gateway !== 'paystack' && gateway !== 'stanbic' && gateway !== 'advansis')) {
       throw new BadRequestException(
         'This payment method requires manual confirmation by our team',
       );
     }
 
-    const verification = await this.payments.verifyPaystack(reference);
-    if (verification.status !== 'success') {
-      throw new BadRequestException('Payment has not been completed');
-    }
-    if (verification.amount < order.totalPesewas) {
-      throw new BadRequestException('Payment amount does not match the order total');
+    if (gateway === 'paystack') {
+      const verification = await this.payments.verifyPaystack(reference);
+      if (verification.status !== 'success') {
+        throw new BadRequestException('Payment has not been completed');
+      }
+      if (verification.amount < order.totalPesewas) {
+        throw new BadRequestException('Payment amount does not match the order total');
+      }
+    } else if (gateway === 'stanbic' || gateway === 'advansis') {
+      const verification = await this.payments.verifyStanbic(reference);
+      if (verification.status !== 'success') {
+        throw new BadRequestException('Stanbic payment has not been completed');
+      }
     }
 
     const timeline = [
