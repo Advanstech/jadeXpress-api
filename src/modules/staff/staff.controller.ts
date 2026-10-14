@@ -111,6 +111,17 @@ export class StaffController {
     return this.staffService.resendCredentials(id, user.storeId);
   }
 
+  @Get('audit/stats')
+  @Roles('manager', 'owner')
+  @ApiOperation({ summary: 'Get aggregate audit stats for the store' })
+  getAuditStats(
+    @CurrentUser() user: JwtPayload,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.staffService.getAuditStats(user.storeId, { from, to });
+  }
+
   @Get('audit/all')
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Get all staff audit logs for the store' })

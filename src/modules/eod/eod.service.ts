@@ -327,11 +327,35 @@ export class EodService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getByDate(storeId: string, date: string) {
-    const [eod] = await this.db
-      .select()
-      .from(eodRecords)
-      .where(and(eq(eodRecords.storeId, storeId), eq(eodRecords.businessDate, date)))
-      .limit(1);
+    const eod = await this.db.query.eodRecords.findFirst({
+      where: and(eq(eodRecords.storeId, storeId), eq(eodRecords.businessDate, date)),
+      with: {
+        closedBy: {
+          columns: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+          },
+        },
+        approvedBy: {
+          columns: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+          },
+        },
+        initiatedBy: {
+          columns: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+          },
+        },
+      },
+    });
     if (!eod) throw new NotFoundException('No EOD record for this date');
     return eod;
   }
@@ -342,8 +366,38 @@ export class EodService implements OnModuleInit, OnModuleDestroy {
     const where = eq(eodRecords.storeId, storeId);
 
     const [data, [{ count }]] = await Promise.all([
-      this.db.select().from(eodRecords).where(where)
-        .orderBy(desc(eodRecords.businessDate)).limit(limit).offset(offset),
+      this.db.query.eodRecords.findMany({
+        where,
+        with: {
+          closedBy: {
+            columns: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              role: true,
+            },
+          },
+          approvedBy: {
+            columns: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              role: true,
+            },
+          },
+          initiatedBy: {
+            columns: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              role: true,
+            },
+          },
+        },
+        orderBy: [desc(eodRecords.businessDate)],
+        limit,
+        offset,
+      }),
       this.db.select({ count: sql<number>`count(*)` }).from(eodRecords).where(where),
     ]);
     return paginate(data, Number(count), page, limit);
@@ -599,27 +653,76 @@ export class EodService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  private async autoCloseStoreRecord(record: typeof eodRecords.$inferSelect) {
+    const totals = await this.computeSystemTotals(record.storeId, record.businessDate);
+    const expectedCash = totals.systemCashTotal + record.openingFloat - totals.systemCashRefundTotal - totals.systemExpenseTotal;
+    const expectedMomo = totals.systemMomoTotal - totals.systemMomoRefundTotal;
+
+    await this.db
+      .update(eodRecords)
+      .set({
+        status: 'pending_approval',
+        systemCashTotal: totals.systemCashTotal,
+        systemMomoTotal: totals.systemMomoTotal,
+        systemCardTotal: totals.systemCardTotal,
+        systemTotal: totals.systemTotal,
+        systemSaleCount: totals.systemSaleCount,
+        systemRefundTotal: totals.systemRefundTotal,
+        systemExpenseTotal: totals.systemExpenseTotal,
+        physicalCashCount: expectedCash,
+        momoConfirmed: expectedMomo,
+        cashVariance: 0,
+        momoVariance: 0,
+        varianceNotes: 'Auto-closed at end of day (11:59 PM cutoff) — not closed manually',
+        closedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(eodRecords.id, record.id));
+
+    this.realtime.broadcastToStore(record.storeId, 'eod:auto_closed', {
+      eodId: record.id,
+      businessDate: record.businessDate,
+    });
+  }
+
   async autoCloseStaleShifts() {
     const today = todayStr();
     const now = new Date();
     const minutes = now.getUTCHours() * 60 + now.getUTCMinutes();
-    const pastCutoff = minutes >= 23 * 60 + 55; // 23:55+ — covers the 11:59pm ask
+    const pastCutoff = minutes >= 23 * 60 + 55; // 23:55+ — covers the 11:59pm cutoff
 
-    const conditions = [
+    const shiftConditions = [
       eq(eodShifts.status, 'in_progress'),
       pastCutoff ? lte(eodShifts.businessDate, today) : lt(eodShifts.businessDate, today),
     ];
 
-    const stale = await this.db
-      .select()
-      .from(eodShifts)
-      .where(and(...conditions))
-      .limit(200);
+    const storeConditions = [
+      eq(eodRecords.status, 'in_progress'),
+      pastCutoff ? lte(eodRecords.businessDate, today) : lt(eodRecords.businessDate, today),
+    ];
 
-    for (const shift of stale) {
+    const [staleShifts, staleStoreRecords] = await Promise.all([
+      this.db
+        .select()
+        .from(eodShifts)
+        .where(and(...shiftConditions))
+        .limit(200),
+      this.db
+        .select()
+        .from(eodRecords)
+        .where(and(...storeConditions))
+        .limit(100),
+    ]);
+
+    for (const shift of staleShifts) {
       await this.autoCloseShift(shift);
     }
-    return { autoClosed: stale.length };
+
+    for (const record of staleStoreRecords) {
+      await this.autoCloseStoreRecord(record);
+    }
+
+    return { autoClosedShifts: staleShifts.length, autoClosedStores: staleStoreRecords.length };
   }
 
   /** Paginated shift list — managers see all staff, floor staff see only their own. */

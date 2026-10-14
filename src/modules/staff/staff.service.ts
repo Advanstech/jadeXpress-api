@@ -360,6 +360,61 @@ export class StaffService {
     return combined;
   }
 
+  async getAuditStats(storeId: string, query: { from?: string; to?: string }) {
+    const { auditLogs } = await import('../../database/schema');
+    const conditions = [eq(auditLogs.storeId, storeId)];
+    if (query.from) conditions.push(gte(auditLogs.createdAt, new Date(query.from)));
+    if (query.to) {
+      const endOfDay = new Date(query.to);
+      endOfDay.setHours(23, 59, 59, 999);
+      conditions.push(lte(auditLogs.createdAt, endOfDay));
+    }
+    const where = and(...conditions);
+
+    const [actionCounts, [summary]] = await Promise.all([
+      this.db
+        .select({
+          action: auditLogs.action,
+          count: sql<number>`count(*)`,
+        })
+        .from(auditLogs)
+        .where(where)
+        .groupBy(auditLogs.action),
+      this.db
+        .select({
+          uniqueStaff: sql<number>`count(distinct ${auditLogs.staffId})`,
+          total: sql<number>`count(*)`,
+        })
+        .from(auditLogs)
+        .where(where),
+    ]);
+
+    let sales = 0;
+    let voided = 0;
+    let refunds = 0;
+    let logins = 0;
+    let overrides = 0;
+
+    for (const row of actionCounts) {
+      const cnt = Number(row.count) || 0;
+      if (row.action === 'SALE_COMPLETED') sales += cnt;
+      else if (row.action === 'SALE_VOIDED') voided += cnt;
+      else if (row.action === 'REFUND_PROCESSED') refunds += cnt;
+      else if (row.action === 'CLOCK_IN' || row.action === 'LOGIN') logins += cnt;
+      else if (row.action === 'OVERRIDE' || row.action === 'CHANGE_PASSWORD' || row.action === 'CHANGE_PIN') overrides += cnt;
+    }
+
+    return {
+      total: Number(summary?.total || 0),
+      sales,
+      voided,
+      refunds,
+      logins,
+      overrides,
+      uniqueStaff: Number(summary?.uniqueStaff || 0),
+    };
+  }
+
   async getAllAuditLogs(storeId: string, query: PaginationDto & { from?: string; to?: string; action?: string }) {
     const { auditLogs, staffProfile } = await import('../../database/schema');
     const { page, limit, from, to, action, search } = query;
@@ -378,6 +433,8 @@ export class StaffService {
         or(
           ilike(auditLogs.action, `%${search}%`),
           ilike(auditLogs.entityType, `%${search}%`),
+          ilike(auditLogs.entityId, `%${search}%`),
+          sql`${auditLogs.newData}::text ILIKE ${'%' + search + '%'}`,
           ilike(staffProfile.firstName, `%${search}%`),
           ilike(staffProfile.lastName, `%${search}%`),
         )!,
