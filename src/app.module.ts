@@ -30,6 +30,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { StorefrontModule } from './modules/storefront/storefront.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { PushModule } from './modules/push/push.module';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { SettingsModule } from './modules/settings/settings.module';
     StorefrontModule,
     UploadsModule,
     SettingsModule,
+    PushModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

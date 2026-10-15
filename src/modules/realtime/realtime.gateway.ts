@@ -11,6 +11,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { PushService } from '../push/push.service';
 
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? 'http://localhost:3000').split(',');
 
@@ -40,6 +41,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   constructor(
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly push: PushService,
   ) {}
 
   async handleConnection(client: Socket) {
@@ -75,6 +77,8 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   // ── Broadcast helpers (called from services) ──────────────────────────────
   broadcastToStore(storeId: string, event: string, data: unknown) {
     this.server.to(`store:${storeId}`).emit(event, data);
+    // Also reach closed/backgrounded PWAs (only events with a push rule send)
+    void this.push.dispatchEvent(storeId, event, data);
   }
 
   broadcastStockAlert(storeId: string, alert: {
