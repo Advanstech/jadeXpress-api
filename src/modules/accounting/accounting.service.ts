@@ -75,16 +75,16 @@ export class AccountingService {
     const expensesPesewas = Number(exp.total);
 
     // COGS for the period — sum of cost × qty for all sale_out movements
+    // minus cost of units restocked via refunds (return_in)
     const [cogsAgg] = await this.db
       .select({
-        cogs: sql<number>`coalesce(sum(${stockMovements.costPricePesewas} * abs(${stockMovements.quantityChange})), 0)`,
+        cogs: sql<number>`coalesce(sum(case when ${stockMovements.type} = 'return_in' then -1 else 1 end * coalesce(${stockMovements.costPricePesewas}, 0) * abs(${stockMovements.quantityChange})), 0)`,
       })
       .from(stockMovements)
       .where(
         and(
           eq(stockMovements.storeId, storeId),
-          eq(stockMovements.type, 'sale_out'),
-          eq(stockMovements.referenceType, 'sale'),
+          sql`((${stockMovements.type} = 'sale_out' and ${stockMovements.referenceType} = 'sale') or (${stockMovements.type} = 'return_in' and ${stockMovements.referenceType} = 'refund'))`,
           gte(stockMovements.createdAt, startDate),
           lte(stockMovements.createdAt, endDate),
         ),
@@ -283,16 +283,16 @@ export class AccountingService {
     // COGS: sum(cost_price × abs(quantity_change)) for all sale_out movements
     // on this day. Movements without a cost price contribute 0 COGS (e.g. older
     // sales recorded before cost tracking was added).
+    // Restocked refunds (return_in) are netted out.
     const [cogsRow] = await this.db
       .select({
-        cogs: sql<number>`coalesce(sum(${stockMovements.costPricePesewas} * abs(${stockMovements.quantityChange})), 0)`,
+        cogs: sql<number>`coalesce(sum(case when ${stockMovements.type} = 'return_in' then -1 else 1 end * coalesce(${stockMovements.costPricePesewas}, 0) * abs(${stockMovements.quantityChange})), 0)`,
       })
       .from(stockMovements)
       .where(
         and(
           eq(stockMovements.storeId, storeId),
-          eq(stockMovements.type, 'sale_out'),
-          eq(stockMovements.referenceType, 'sale'),
+          sql`((${stockMovements.type} = 'sale_out' and ${stockMovements.referenceType} = 'sale') or (${stockMovements.type} = 'return_in' and ${stockMovements.referenceType} = 'refund'))`,
           gte(stockMovements.createdAt, dayStart),
           lte(stockMovements.createdAt, dayEnd),
         ),

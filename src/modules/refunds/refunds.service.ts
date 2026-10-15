@@ -251,6 +251,18 @@ export class RefundsService {
 
       const stockMap = new Map(existingStockRows.map((s: any) => [s.productId, s]));
 
+      // Cost at which these units originally left stock (for COGS reversal)
+      const originalOut = await tx
+        .select({ productId: stockMovements.productId, cost: stockMovements.costPricePesewas })
+        .from(stockMovements)
+        .where(and(
+          eq(stockMovements.referenceType, 'sale'),
+          eq(stockMovements.referenceId, refund.saleId),
+          eq(stockMovements.type, 'sale_out'),
+          inArray(stockMovements.productId, productIds),
+        ));
+      const costMap = new Map<string, number | null>(originalOut.map((m: any) => [m.productId, m.cost]));
+
       // Build all stock movements in memory
       const movementInserts: any[] = [];
       const stockUpdates: Promise<any>[] = [];
@@ -268,6 +280,7 @@ export class RefundsService {
           quantityChange: item.quantity,
           quantityBefore: qtyBefore,
           quantityAfter: qtyAfter,
+          costPricePesewas: costMap.get(item.productId) ?? null,
           referenceType: 'refund' as const,
           referenceId: refund.id,
           performedById,
