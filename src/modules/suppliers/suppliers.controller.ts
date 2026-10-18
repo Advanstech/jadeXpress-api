@@ -35,13 +35,7 @@ export class SuppliersController {
     return this.suppliersService.list(query);
   }
 
-  @Get(':id')
-  getById(@Param('id') id: string) {
-    return this.suppliersService.getById(id);
-  }
-
-  // ── Static routes must be declared BEFORE parameterised routes so NestJS
-  //    doesn't match "invoices" as an :id.
+  // ── Static routes & purchase-order subroutes must be declared BEFORE :id routes ──
   @Get('invoices/check')
   @ApiOperation({ summary: 'Check if an invoice number already exists (pre-submission duplicate check)' })
   checkInvoiceNumber(
@@ -51,63 +45,15 @@ export class SuppliersController {
     return this.suppliersService.checkInvoiceNumber(invoiceNumber, supplierId);
   }
 
-  @Get(':id/purchase-orders')
-  @ApiOperation({ summary: 'List all POs for a specific supplier' })
-  getSupplierPOs(
-    @Param('id') id: string,
-    @Query(new ZodValidationPipe(PaginationSchema)) query: any,
-  ) {
-    return this.suppliersService.getSupplierPOs(id, query);
-  }
-
-  @Get(':id/invoices')
-  @ApiOperation({ summary: 'List all uploaded supplier invoices' })
-  getSupplierInvoices(
-    @Param('id') id: string,
-    @Query(new ZodValidationPipe(PaginationSchema)) query: any,
-  ) {
-    return this.suppliersService.getSupplierInvoices(id, query);
-  }
-
-  @Delete('invoices/:id')
-  @Roles('manager', 'owner', 'supervisor')
-  @ApiOperation({ summary: 'Delete an uploaded invoice and its purchase order' })
-  deleteInvoice(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.suppliersService.deleteInvoice(id, user.storeId);
-  }
-
-  @Get(':id/products')
-  @ApiOperation({ summary: 'List all products ever sourced from a supplier' })
-  getSupplierProducts(
-    @Param('id') id: string,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    return this.suppliersService.getSupplierProducts(id, user.storeId);
-  }
-
-  @Post()
-  @Roles('manager', 'owner')
-  create(@Body(new ZodValidationPipe(CreateSupplierSchema)) dto: CreateSupplierDto) {
-    return this.suppliersService.create(dto);
-  }
-
-  @Put(':id')
-  @Roles('manager', 'owner')
-  update(@Param('id') id: string, @Body(new ZodValidationPipe(UpdateSupplierSchema)) dto: UpdateSupplierDto) {
-    return this.suppliersService.update(id, dto);
-  }
-
-  @Delete(':id')
-  @Roles('manager', 'owner')
-  @ApiOperation({ summary: 'Delete / deactivate supplier' })
-  delete(@Param('id') id: string) {
-    return this.suppliersService.delete(id);
-  }
-
   @Get('purchase-orders/store')
-  @ApiOperation({ summary: 'List POs for current store' })
-  listPOs(@CurrentUser() user: JwtPayload, @Query(new ZodValidationPipe(PaginationSchema)) query: any) {
-    return this.suppliersService.listPurchaseOrders(user.storeId, query);
+  @ApiOperation({ summary: 'List POs for current store or all stores' })
+  listPOs(
+    @CurrentUser() user: JwtPayload,
+    @Query(new ZodValidationPipe(PaginationSchema)) query: any,
+    @Query('storeId') storeId?: string,
+  ) {
+    const targetStoreId = storeId === 'all' ? null : (storeId && storeId !== 'current' ? storeId : user.storeId);
+    return this.suppliersService.listPurchaseOrders(targetStoreId, query);
   }
 
   @Get('purchase-orders/:id')
@@ -179,5 +125,64 @@ export class SuppliersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.suppliersService.rejectPurchaseOrder(id, user.sub, user.storeId, dto.notes);
+  }
+
+  @Delete('invoices/:id')
+  @Roles('manager', 'owner', 'supervisor')
+  @ApiOperation({ summary: 'Delete an uploaded invoice and its purchase order' })
+  deleteInvoice(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.suppliersService.deleteInvoice(id, user.storeId);
+  }
+
+  // ── Parameterized supplier :id subroutes ──
+  @Get(':id/purchase-orders')
+  @ApiOperation({ summary: 'List all POs for a specific supplier' })
+  getSupplierPOs(
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(PaginationSchema)) query: any,
+  ) {
+    return this.suppliersService.getSupplierPOs(id, query);
+  }
+
+  @Get(':id/invoices')
+  @ApiOperation({ summary: 'List all uploaded supplier invoices' })
+  getSupplierInvoices(
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(PaginationSchema)) query: any,
+  ) {
+    return this.suppliersService.getSupplierInvoices(id, query);
+  }
+
+  @Get(':id/products')
+  @ApiOperation({ summary: 'List all products ever sourced from a supplier' })
+  getSupplierProducts(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.suppliersService.getSupplierProducts(id, user.storeId);
+  }
+
+  @Get(':id')
+  getById(@Param('id') id: string) {
+    return this.suppliersService.getById(id);
+  }
+
+  @Post()
+  @Roles('manager', 'owner')
+  create(@Body(new ZodValidationPipe(CreateSupplierSchema)) dto: CreateSupplierDto) {
+    return this.suppliersService.create(dto);
+  }
+
+  @Put(':id')
+  @Roles('manager', 'owner')
+  update(@Param('id') id: string, @Body(new ZodValidationPipe(UpdateSupplierSchema)) dto: UpdateSupplierDto) {
+    return this.suppliersService.update(id, dto);
+  }
+
+  @Delete(':id')
+  @Roles('manager', 'owner')
+  @ApiOperation({ summary: 'Delete / deactivate supplier' })
+  delete(@Param('id') id: string) {
+    return this.suppliersService.delete(id);
   }
 }

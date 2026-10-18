@@ -38,8 +38,18 @@ export class StockIntelligenceController {
 
   @Get('expiry-risk')
   @ApiOperation({ summary: 'Expiry risk report — batches expiring within 90 days' })
-  getExpiryRisk(@CurrentUser() user: JwtPayload) {
-    return this.service.getExpiryRiskReport(user.storeId);
+  getExpiryRisk(@CurrentUser() user: JwtPayload, @Query('storeId') storeId?: string) {
+    const targetStoreId = storeId === 'all' ? null : (storeId && storeId !== 'current' ? storeId : user.storeId);
+    return this.service.getExpiryRiskReport(targetStoreId);
+  }
+
+  @Get('transfer-recommendations')
+  @ApiOperation({ summary: 'Cross-branch stock transfer rebalancing recommendations' })
+  getTransferRecommendations(
+    @CurrentUser() user: JwtPayload,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.service.getTransferRecommendations(storeId || user.storeId);
   }
 
   @Post('upsell')

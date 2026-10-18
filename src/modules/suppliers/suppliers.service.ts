@@ -524,10 +524,10 @@ export class SuppliersService {
     return { exists: false };
   }
 
-  async listPurchaseOrders(storeId: string, query: PaginationDto) {
+  async listPurchaseOrders(storeId: string | null | undefined, query: PaginationDto) {
     const { page, limit } = query;
     const offset = (page - 1) * limit;
-    const where = eq(purchaseOrders.storeId, storeId);
+    const where = storeId && storeId !== 'all' ? eq(purchaseOrders.storeId, storeId) : undefined;
 
     const [data, [{ count }]] = await Promise.all([
       this.db.select({

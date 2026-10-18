@@ -10,6 +10,7 @@ export const createTransferSchema = z.object({
   fromStoreId: z.string().uuid(),
   toStoreId: z.string().uuid(),
   notes: z.string().optional(),
+  instantTransfer: z.boolean().optional().default(false),
   items: z.array(createTransferItemSchema).min(1),
 });
 

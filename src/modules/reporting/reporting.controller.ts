@@ -11,16 +11,32 @@ import { Roles } from '../../common/decorators/roles.decorator';
 export class ReportingController {
   constructor(private readonly reportingService: ReportingService) {}
 
+  private resolveStoreId(u: JwtPayload, storeId?: string): string | null {
+    if (storeId === 'all') return null;
+    if (storeId && storeId !== 'current') return storeId;
+    return u.storeId || null;
+  }
+
   @Get('summary')
   @ApiOperation({ summary: 'Sales KPI summary for period' })
-  getSummary(@CurrentUser() u: JwtPayload, @Query('from') from: string, @Query('to') to: string) {
-    return this.reportingService.getSalesSummary(u.storeId, from, to);
+  getSummary(
+    @CurrentUser() u: JwtPayload,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.reportingService.getSalesSummary(this.resolveStoreId(u, storeId), from, to);
   }
 
   @Get('by-day')
   @ApiOperation({ summary: 'Daily revenue chart data' })
-  getByDay(@CurrentUser() u: JwtPayload, @Query('from') from: string, @Query('to') to: string) {
-    return this.reportingService.getSalesByDay(u.storeId, from, to);
+  getByDay(
+    @CurrentUser() u: JwtPayload,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.reportingService.getSalesByDay(this.resolveStoreId(u, storeId), from, to);
   }
 
   @Get('top-products')
@@ -30,25 +46,46 @@ export class ReportingController {
     @Query('from') from: string,
     @Query('to') to: string,
     @Query('limit') limit?: string,
+    @Query('storeId') storeId?: string,
   ) {
-    return this.reportingService.getTopProducts(u.storeId, from, to, limit ? parseInt(limit) : 10);
+    return this.reportingService.getTopProducts(
+      this.resolveStoreId(u, storeId),
+      from,
+      to,
+      limit ? parseInt(limit) : 10,
+    );
   }
 
   @Get('by-cashier')
   @ApiOperation({ summary: 'Per-cashier performance' })
-  getByCashier(@CurrentUser() u: JwtPayload, @Query('from') from: string, @Query('to') to: string) {
-    return this.reportingService.getPerCashierPerformance(u.storeId, from, to);
+  getByCashier(
+    @CurrentUser() u: JwtPayload,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.reportingService.getPerCashierPerformance(this.resolveStoreId(u, storeId), from, to);
   }
 
   @Get('by-category')
   @ApiOperation({ summary: 'Per-category revenue performance' })
-  getByCategory(@CurrentUser() u: JwtPayload, @Query('from') from: string, @Query('to') to: string) {
-    return this.reportingService.getPerCategoryPerformance(u.storeId, from, to);
+  getByCategory(
+    @CurrentUser() u: JwtPayload,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.reportingService.getPerCategoryPerformance(this.resolveStoreId(u, storeId), from, to);
   }
 
   @Get('heatmap')
   @ApiOperation({ summary: 'Hourly/day-of-week transaction heatmap' })
-  getHeatmap(@CurrentUser() u: JwtPayload, @Query('from') from: string, @Query('to') to: string) {
-    return this.reportingService.getHourlyHeatmap(u.storeId, from, to);
+  getHeatmap(
+    @CurrentUser() u: JwtPayload,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.reportingService.getHourlyHeatmap(this.resolveStoreId(u, storeId), from, to);
   }
 }

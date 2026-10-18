@@ -12,7 +12,9 @@ export interface JwtPayload {
 
 export const CurrentUser = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): JwtPayload => {
-    const request = ctx.switchToHttp().getRequest<FastifyRequest & { user: JwtPayload }>();
-    return request.user;
+    const request = ctx.switchToHttp().getRequest<FastifyRequest & { user: JwtPayload; effectiveStoreId?: string }>();
+    return request.effectiveStoreId
+      ? { ...request.user, storeId: request.effectiveStoreId }
+      : request.user;
   },
 );

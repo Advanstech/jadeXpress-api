@@ -37,4 +37,5 @@ export * from './push-subscriptions';
 export * from './eod';
 export * from './payroll';
 export * from './invoicing';
+export * from './payment-authorizations';
 export * from './audit';

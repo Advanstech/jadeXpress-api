@@ -24,51 +24,51 @@ export class AccountingService {
       .orderBy(plSnapshots.periodDate);
   }
 
-  async getAggregatedPL(storeId: string, from: string, to: string) {
+  async getAggregatedPL(storeId: string | null | undefined, from: string, to: string) {
     const { startDate, endDate } = normalizeDateRange(from, to);
 
     // Live P&L aggregation from source tables so the page works even when no
     // pre-computed snapshots have been generated yet.
+    const revConditions: any[] = [
+      inArray(sales.status, ['completed', 'partially_refunded', 'refunded']),
+      gte(sales.createdAt, startDate),
+      lte(sales.createdAt, endDate),
+    ];
+    if (storeId && storeId !== 'all') revConditions.push(eq(sales.storeId, storeId));
+
     const [rev] = await this.db
       .select({
         total: sql<number>`coalesce(sum(${sales.totalPesewas}), 0)`,
       })
       .from(sales)
-      .where(
-        and(
-          eq(sales.storeId, storeId),
-          inArray(sales.status, ['completed', 'partially_refunded', 'refunded']),
-          gte(sales.createdAt, startDate),
-          lte(sales.createdAt, endDate),
-        ),
-      );
+      .where(and(...revConditions));
+
+    const refConditions: any[] = [
+      eq(refundRequests.status, 'approved'),
+      gte(refundRequests.processedAt, startDate),
+      lte(refundRequests.processedAt, endDate),
+    ];
+    if (storeId && storeId !== 'all') refConditions.push(eq(refundRequests.storeId, storeId));
 
     const [ref] = await this.db
       .select({
         total: sql<number>`coalesce(sum(${refundRequests.totalAmountPesewas}), 0)`,
       })
       .from(refundRequests)
-      .where(
-        and(
-          eq(refundRequests.storeId, storeId),
-          eq(refundRequests.status, 'approved'),
-          gte(refundRequests.processedAt, startDate),
-          lte(refundRequests.processedAt, endDate),
-        ),
-      );
+      .where(and(...refConditions));
+
+    const expConditions: any[] = [
+      gte(expenses.expenseDate, startDate),
+      lte(expenses.expenseDate, endDate),
+    ];
+    if (storeId && storeId !== 'all') expConditions.push(eq(expenses.storeId, storeId));
 
     const [exp] = await this.db
       .select({
         total: sql<number>`coalesce(sum(${expenses.amountPesewas}), 0)`,
       })
       .from(expenses)
-      .where(
-        and(
-          eq(expenses.storeId, storeId),
-          gte(expenses.expenseDate, startDate),
-          lte(expenses.expenseDate, endDate),
-        ),
-      );
+      .where(and(...expConditions));
 
     const revenuePesewas = Number(rev.total);
     const refundsPesewas = Number(ref.total);
@@ -76,19 +76,19 @@ export class AccountingService {
 
     // COGS for the period — sum of cost × qty for all sale_out movements
     // minus cost of units restocked via refunds (return_in)
+    const cogsConditions: any[] = [
+      sql`((${stockMovements.type} = 'sale_out' and ${stockMovements.referenceType} = 'sale') or (${stockMovements.type} = 'return_in' and ${stockMovements.referenceType} = 'refund'))`,
+      gte(stockMovements.createdAt, startDate),
+      lte(stockMovements.createdAt, endDate),
+    ];
+    if (storeId && storeId !== 'all') cogsConditions.push(eq(stockMovements.storeId, storeId));
+
     const [cogsAgg] = await this.db
       .select({
         cogs: sql<number>`coalesce(sum(case when ${stockMovements.type} = 'return_in' then -1 else 1 end * coalesce(${stockMovements.costPricePesewas}, 0) * abs(${stockMovements.quantityChange})), 0)`,
       })
       .from(stockMovements)
-      .where(
-        and(
-          eq(stockMovements.storeId, storeId),
-          sql`((${stockMovements.type} = 'sale_out' and ${stockMovements.referenceType} = 'sale') or (${stockMovements.type} = 'return_in' and ${stockMovements.referenceType} = 'refund'))`,
-          gte(stockMovements.createdAt, startDate),
-          lte(stockMovements.createdAt, endDate),
-        ),
-      );
+      .where(and(...cogsConditions));
 
     const cogsPesewas = Number(cogsAgg.cogs);
     const grossProfitPesewas = revenuePesewas - refundsPesewas - cogsPesewas;
@@ -100,14 +100,7 @@ export class AccountingService {
         total: sql<number>`coalesce(sum(${sales.totalPesewas}), 0)`,
       })
       .from(sales)
-      .where(
-        and(
-          eq(sales.storeId, storeId),
-          inArray(sales.status, ['completed', 'partially_refunded', 'refunded']),
-          gte(sales.createdAt, startDate),
-          lte(sales.createdAt, endDate),
-        ),
-      )
+      .where(and(...revConditions))
       .groupBy(sql`date(${sales.createdAt})`);
 
     const refundsByDay = await this.db
@@ -116,14 +109,7 @@ export class AccountingService {
         total: sql<number>`coalesce(sum(${refundRequests.totalAmountPesewas}), 0)`,
       })
       .from(refundRequests)
-      .where(
-        and(
-          eq(refundRequests.storeId, storeId),
-          eq(refundRequests.status, 'approved'),
-          gte(refundRequests.processedAt, startDate),
-          lte(refundRequests.processedAt, endDate),
-        ),
-      )
+      .where(and(...refConditions))
       .groupBy(sql`date(${refundRequests.processedAt})`);
 
     const expensesByDay = await this.db
@@ -132,13 +118,7 @@ export class AccountingService {
         total: sql<number>`coalesce(sum(${expenses.amountPesewas}), 0)`,
       })
       .from(expenses)
-      .where(
-        and(
-          eq(expenses.storeId, storeId),
-          gte(expenses.expenseDate, startDate),
-          lte(expenses.expenseDate, endDate),
-        ),
-      )
+      .where(and(...expConditions))
       .groupBy(sql`date(${expenses.expenseDate})`);
 
     const breakdown: Record<string, number> = {};
@@ -158,11 +138,20 @@ export class AccountingService {
     };
   }
 
-  async getCashFlow(storeId: string, from: string, to: string) {
+  async getCashFlow(storeId: string | null | undefined, from: string, to: string) {
     const { startDate, endDate } = normalizeDateRange(from, to);
     // Cash flow counts only CASH movements. The 'cost_of_goods' category holds
     // non-cash Accounts Payable records (invoice approved / goods received) —
     // cash only moves when the supplier is actually paid (SUPPLIER_PAYMENT debit).
+    const conditions: any[] = [
+      sql`${ledgerEntries.category} <> 'cost_of_goods'`,
+      gte(ledgerEntries.entryDate, startDate),
+      lte(ledgerEntries.entryDate, endDate),
+    ];
+    if (storeId && storeId !== 'all') {
+      conditions.push(eq(ledgerEntries.storeId, storeId));
+    }
+
     return this.db
       .select({
         date: sql<string>`date(${ledgerEntries.entryDate})`,
@@ -171,20 +160,21 @@ export class AccountingService {
         net: sql<number>`coalesce(sum(case when ${ledgerEntries.entryType} = 'credit' then ${ledgerEntries.amountPesewas} else -${ledgerEntries.amountPesewas} end), 0)`,
       })
       .from(ledgerEntries)
-      .where(
-        and(
-          eq(ledgerEntries.storeId, storeId),
-          sql`${ledgerEntries.category} <> 'cost_of_goods'`,
-          gte(ledgerEntries.entryDate, startDate),
-          lte(ledgerEntries.entryDate, endDate),
-        ),
-      )
+      .where(and(...conditions))
       .groupBy(sql`date(${ledgerEntries.entryDate})`)
       .orderBy(sql`date(${ledgerEntries.entryDate})`);
   }
 
-  async getTaxSummary(storeId: string, from: string, to: string) {
+  async getTaxSummary(storeId: string | null | undefined, from: string, to: string) {
     const { startDate, endDate } = normalizeDateRange(from, to);
+    const conditions: any[] = [
+      inArray(sales.status, ['completed', 'partially_refunded', 'refunded']),
+      gte(sales.createdAt, startDate),
+      lte(sales.createdAt, endDate),
+    ];
+    if (storeId && storeId !== 'all') {
+      conditions.push(eq(sales.storeId, storeId));
+    }
 
     const [totals] = await this.db
       .select({
@@ -193,14 +183,7 @@ export class AccountingService {
         getfundTotal: sql<number>`coalesce(sum(${sales.getfundAmountPesewas}), 0)`,
       })
       .from(sales)
-      .where(
-        and(
-          eq(sales.storeId, storeId),
-          inArray(sales.status, ['completed', 'partially_refunded', 'refunded']),
-          gte(sales.createdAt, startDate),
-          lte(sales.createdAt, endDate),
-        ),
-      );
+      .where(and(...conditions));
 
     const vat = Number(totals.vatTotal);
     const nhil = Number(totals.nhilTotal);

@@ -49,8 +49,10 @@ export class ExpensesController {
     @CurrentUser() user: JwtPayload,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('storeId') storeId?: string,
   ) {
-    return this.expensesService.getSummaryByCategory(user.storeId, from, to);
+    const targetStoreId = storeId === 'all' ? null : (storeId && storeId !== 'current' ? storeId : user.storeId);
+    return this.expensesService.getSummaryByCategory(targetStoreId, from, to);
   }
 
   @Get()
@@ -58,8 +60,10 @@ export class ExpensesController {
   list(
     @CurrentUser() user: JwtPayload,
     @Query(new ZodValidationPipe(ExpenseQuerySchema)) query: any,
+    @Query('storeId') storeId?: string,
   ) {
-    return this.expensesService.list(user.storeId, query);
+    const targetStoreId = storeId === 'all' ? null : (storeId && storeId !== 'current' ? storeId : user.storeId);
+    return this.expensesService.list(targetStoreId, query);
   }
 
   @Get(':id')

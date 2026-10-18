@@ -8,6 +8,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { RolesGuard } from './common/guards/roles.guard';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
+import { StoreScopeGuard } from './common/guards/store-scope.guard';
 import { AuthModule } from './modules/auth/auth.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { SalesModule } from './modules/sales/sales.module';
@@ -31,6 +32,8 @@ import { StorefrontModule } from './modules/storefront/storefront.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { PushModule } from './modules/push/push.module';
+import { BranchesModule } from './modules/branches/branches.module';
+import { PaymentAuthorizationsModule } from './modules/payment-authorizations/payment-authorizations.module';
 
 @Module({
   imports: [
@@ -42,6 +45,7 @@ import { PushModule } from './modules/push/push.module';
     DatabaseModule,
     AuthModule,
     StaffModule,
+    BranchesModule,
     InventoryModule,
     SalesModule,
     CustomersModule,
@@ -58,6 +62,7 @@ import { PushModule } from './modules/push/push.module';
     EmailModule,
     PayrollModule,
     InvoicingModule,
+    PaymentAuthorizationsModule,
     PaymentsModule,
     StorefrontModule,
     UploadsModule,
@@ -71,6 +76,7 @@ import { PushModule } from './modules/push/push.module';
     // JwtAuthGuard MUST come first — it populates req.user from the Bearer token
     // RolesGuard runs second and reads req.user to check permissions
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: StoreScopeGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
 })

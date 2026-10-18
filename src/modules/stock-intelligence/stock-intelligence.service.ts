@@ -5,9 +5,10 @@
  * Mocked data is realistic and matches the actual response contract.
  */
 import { Injectable, Inject } from '@nestjs/common';
-import { eq, and, lte, desc, inArray } from 'drizzle-orm';
+import { eq, and, lte, desc, inArray, sql } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
+  stores,
   demandForecasts,
   stockItems,
   stockBatches,
@@ -110,22 +111,24 @@ export class StockIntelligenceService {
    * MOCKED_PENDING_MODEL_INTEGRATION
    * Real impl: combine batch expiry dates with demand forecast to rank true risk.
    */
-  async getExpiryRiskReport(storeId: string) {
+  async getExpiryRiskReport(storeId?: string | null) {
     const now = new Date();
     const in90Days = new Date(now);
     in90Days.setDate(now.getDate() + 90);
+
+    const conditions: any[] = [
+      eq(stockBatches.isActive, true),
+      lte(stockBatches.expiryDate, in90Days.toISOString().split('T')[0]),
+    ];
+    if (storeId && storeId !== 'all') {
+      conditions.push(eq(stockBatches.storeId, storeId));
+    }
 
     const batches = await this.db
       .select({ batch: stockBatches, product: products })
       .from(stockBatches)
       .innerJoin(products, eq(products.id, stockBatches.productId))
-      .where(
-        and(
-          eq(stockBatches.storeId, storeId),
-          eq(stockBatches.isActive, true),
-          lte(stockBatches.expiryDate, in90Days.toISOString().split('T')[0]),
-        ),
-      )
+      .where(and(...conditions))
       .orderBy(stockBatches.expiryDate);
 
     return batches.map(({ batch, product }) => {
@@ -208,5 +211,107 @@ export class StockIntelligenceService {
       isMocked: true,
       note: 'MOCKED_PENDING_MODEL_INTEGRATION — replace with scheduled ML batch job',
     };
+  }
+
+  /**
+   * Cross-Branch Stock Level Intelligence
+   * Identifies inter-branch stock balancing opportunities:
+   * Recommends transferring surplus inventory from well-stocked branches (e.g., Dzorwulu or Israel Park)
+   * to branches facing low stock or stockouts (e.g., Sowutuom).
+   */
+  async getTransferRecommendations(targetStoreId?: string) {
+    // 1. Fetch all active stores
+    const allStores = await this.db.select().from(stores).where(eq(stores.status, 'active'));
+    if (allStores.length < 2) return [];
+
+    // 2. Fetch all stock items with products
+    const allStockItems = await this.db
+      .select({
+        stockId: stockItems.id,
+        productId: products.id,
+        productName: products.name,
+        sku: products.sku,
+        reorderPoint: products.reorderPoint,
+        reorderQty: products.reorderQty,
+        costPricePesewas: products.costPricePesewas,
+        storeId: stockItems.storeId,
+        quantityOnHand: stockItems.quantityOnHand,
+      })
+      .from(stockItems)
+      .innerJoin(products, eq(stockItems.productId, products.id))
+      .where(sql`${products.status} = 'active'`);
+
+    // Group by product
+    const productStoreMap = new Map<string, Array<{
+      storeId: string;
+      quantityOnHand: number;
+      productName: string;
+      sku: string;
+      reorderPoint: number;
+      reorderQty: number;
+      costPricePesewas: number;
+    }>>();
+
+    for (const item of allStockItems) {
+      if (!productStoreMap.has(item.productId)) {
+        productStoreMap.set(item.productId, []);
+      }
+      productStoreMap.get(item.productId)!.push(item);
+    }
+
+    const storeMap = new Map(allStores.map((s) => [s.id, s.name]));
+    const recommendations: any[] = [];
+
+    for (const [productId, storeEntries] of productStoreMap.entries()) {
+      // Find stores that are low on this product
+      const lowStores = storeEntries.filter(
+        (se) => se.quantityOnHand <= Math.max(1, se.reorderPoint) &&
+          (!targetStoreId || se.storeId === targetStoreId),
+      );
+
+      // Find stores that have surplus
+      const surplusStores = storeEntries.filter(
+        (se) => se.quantityOnHand > (se.reorderPoint * 2) && se.quantityOnHand >= 10,
+      );
+
+      for (const lowStore of lowStores) {
+        for (const surplusStore of surplusStores) {
+          if (lowStore.storeId === surplusStore.storeId) continue;
+
+          const transferableSurplus = Math.floor(surplusStore.quantityOnHand - surplusStore.reorderPoint);
+          if (transferableSurplus < 2) continue;
+
+          const recommendedQty = Math.min(
+            transferableSurplus,
+            lowStore.reorderQty || 10,
+          );
+
+          if (recommendedQty <= 0) continue;
+
+          const isCritical = lowStore.quantityOnHand === 0;
+
+          recommendations.push({
+            productId,
+            productName: lowStore.productName,
+            sku: lowStore.sku,
+            unitCostPesewas: lowStore.costPricePesewas,
+            fromStoreId: surplusStore.storeId,
+            fromStoreName: storeMap.get(surplusStore.storeId) || 'Source Branch',
+            fromStoreStock: surplusStore.quantityOnHand,
+            toStoreId: lowStore.storeId,
+            toStoreName: storeMap.get(lowStore.storeId) || 'Destination Branch',
+            toStoreStock: lowStore.quantityOnHand,
+            recommendedQty,
+            urgency: isCritical ? 'critical' : 'warning',
+            potentialSavingsPesewas: recommendedQty * lowStore.costPricePesewas,
+            reasoning: isCritical
+              ? `${storeMap.get(lowStore.storeId) || 'Destination'} is completely OUT OF STOCK (0 units), while ${storeMap.get(surplusStore.storeId) || 'Source'} has ${surplusStore.quantityOnHand} units. Transferring ${recommendedQty} units prevents lost sales without needing a new supplier purchase order.`
+              : `${storeMap.get(lowStore.storeId) || 'Destination'} is running low (${lowStore.quantityOnHand} units remaining, threshold: ${lowStore.reorderPoint}). ${storeMap.get(surplusStore.storeId) || 'Source'} has a surplus of ${surplusStore.quantityOnHand} units. Rebalancing ${recommendedQty} units optimizes inventory turnover.`,
+          });
+        }
+      }
+    }
+
+    return recommendations.sort((a, b) => (a.urgency === 'critical' ? -1 : 1));
   }
 }

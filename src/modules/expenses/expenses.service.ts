@@ -22,18 +22,19 @@ export class ExpensesService {
   }
 
   async list(
-    storeId: string,
+    storeId: string | null | undefined,
     query: PaginationDto & { categoryId?: string; from?: string; to?: string },
   ) {
     const { page, limit, from, to, categoryId } = query;
     const offset = (page - 1) * limit;
 
-    const conditions: any[] = [eq(expenses.storeId, storeId)];
+    const conditions: any[] = [];
+    if (storeId && storeId !== 'all') conditions.push(eq(expenses.storeId, storeId));
     if (from) conditions.push(gte(expenses.expenseDate, new Date(from)));
     if (to) conditions.push(lte(expenses.expenseDate, new Date(to)));
     if (categoryId) conditions.push(eq(expenses.categoryId, categoryId));
 
-    const where = and(...conditions);
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     const [data, [{ count }]] = await Promise.all([
       this.db.query.expenses.findMany({
@@ -138,10 +139,13 @@ export class ExpensesService {
     return expense;
   }
 
-  async getSummaryByCategory(storeId: string, from?: string, to?: string) {
-    const conditions: any[] = [eq(expenses.storeId, storeId)];
+  async getSummaryByCategory(storeId?: string | null, from?: string, to?: string) {
+    const conditions: any[] = [];
+    if (storeId && storeId !== 'all') conditions.push(eq(expenses.storeId, storeId));
     if (from) conditions.push(gte(expenses.expenseDate, new Date(from)));
     if (to) conditions.push(lte(expenses.expenseDate, new Date(to)));
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     const byCategory = await this.db
       .select({
@@ -152,7 +156,7 @@ export class ExpensesService {
       })
       .from(expenses)
       .leftJoin(expenseCategories, eq(expenses.categoryId, expenseCategories.id))
-      .where(and(...conditions))
+      .where(where)
       .groupBy(expenses.categoryId, expenseCategories.name);
 
     // Flat totals the frontend StatCards read
@@ -161,10 +165,13 @@ export class ExpensesService {
     // This-month total
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthConditions: any[] = [gte(expenses.expenseDate, monthStart)];
+    if (storeId && storeId !== 'all') monthConditions.push(eq(expenses.storeId, storeId));
+
     const [monthRow] = await this.db
       .select({ total: sql<number>`coalesce(sum(${expenses.amountPesewas}), 0)::int` })
       .from(expenses)
-      .where(and(eq(expenses.storeId, storeId), gte(expenses.expenseDate, monthStart)));
+      .where(and(...monthConditions));
 
     return {
       totalAmountPesewas,

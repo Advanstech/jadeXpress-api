@@ -32,6 +32,12 @@ const ManualJournalSchema = z.object({
 export class AccountingController {
   constructor(private readonly accountingService: AccountingService) {}
 
+  private resolveStoreId(u: JwtPayload, storeId?: string): string | null {
+    if (storeId === 'all') return null;
+    if (storeId && storeId !== 'current') return storeId;
+    return u.storeId || null;
+  }
+
   @Get('pl')
   @ApiOperation({ summary: 'P&L aggregated (daily/weekly/monthly)' })
   getPL(
@@ -39,9 +45,10 @@ export class AccountingController {
     @Query('period') period?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('storeId') storeId?: string,
   ) {
     const dates = this.calculateDates(period, from, to);
-    return this.accountingService.getAggregatedPL(user.storeId, dates.from, dates.to);
+    return this.accountingService.getAggregatedPL(this.resolveStoreId(user, storeId), dates.from, dates.to);
   }
 
   @Get('cash-flow')
@@ -51,9 +58,10 @@ export class AccountingController {
     @Query('period') period?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('storeId') storeId?: string,
   ) {
     const dates = this.calculateDates(period, from, to);
-    return this.accountingService.getCashFlow(user.storeId, dates.from, dates.to);
+    return this.accountingService.getCashFlow(this.resolveStoreId(user, storeId), dates.from, dates.to);
   }
 
   @Get('tax')
@@ -63,9 +71,10 @@ export class AccountingController {
     @Query('period') period?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('storeId') storeId?: string,
   ) {
     const dates = this.calculateDates(period, from, to);
-    return this.accountingService.getTaxSummary(user.storeId, dates.from, dates.to);
+    return this.accountingService.getTaxSummary(this.resolveStoreId(user, storeId), dates.from, dates.to);
   }
 
   private calculateDates(period?: string, from?: string, to?: string) {
