@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { eq, and, sql, desc, or, ilike, gte, lte } from 'drizzle-orm';
@@ -11,6 +12,7 @@ import * as bcrypt from 'bcrypt';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { AiService } from '../ai/ai.service';
+import type { JwtPayload } from '../../common/decorators/current-user.decorator';
 import {
   paymentAuthorizations,
   stores,
@@ -27,6 +29,8 @@ import type {
   DisbursePaymentAuthorizationDto,
 } from './dto/payment-authorizations.dto';
 
+const CROSS_BRANCH_ROLES = new Set(['owner', 'root', 'super_admin']);
+
 @Injectable()
 export class PaymentAuthorizationsService {
   constructor(
@@ -34,6 +38,23 @@ export class PaymentAuthorizationsService {
     private readonly realtimeGateway: RealtimeGateway,
     private readonly aiService: AiService,
   ) {}
+
+  private isElevated(user: JwtPayload): boolean {
+    return CROSS_BRANCH_ROLES.has((user.role || '').toLowerCase());
+  }
+
+  // Non-elevated staff are locked to their own (effective) branch; elevated
+  // roles may view a specific branch or all branches when no filter is given.
+  private scopedStoreId(requested: string | undefined, user: JwtPayload): string | undefined {
+    if (!this.isElevated(user)) return user.storeId;
+    return requested && requested !== 'all' ? requested : undefined;
+  }
+
+  private assertStoreScope(storeId: string, user: JwtPayload) {
+    if (!this.isElevated(user) && storeId !== user.storeId) {
+      throw new ForbiddenException('Payment authorization belongs to another branch');
+    }
+  }
 
   async list(query: {
     storeId?: string;
@@ -44,15 +65,16 @@ export class PaymentAuthorizationsService {
     to?: string;
     page?: number;
     limit?: number;
-  }) {
+  }, user: JwtPayload) {
     const page = query.page ? Number(query.page) : 1;
     const limit = query.limit ? Number(query.limit) : 50;
     const offset = (page - 1) * limit;
 
     const whereConditions: any[] = [];
 
-    if (query.storeId && query.storeId !== 'all') {
-      whereConditions.push(eq(paymentAuthorizations.storeId, query.storeId));
+    const scopedStore = this.scopedStoreId(query.storeId, user);
+    if (scopedStore) {
+      whereConditions.push(eq(paymentAuthorizations.storeId, scopedStore));
     }
 
     if (query.status && query.status !== 'all') {
@@ -120,10 +142,11 @@ export class PaymentAuthorizationsService {
     };
   }
 
-  async getStats(storeId?: string) {
+  async getStats(storeId: string | undefined, user: JwtPayload) {
     const conditions: any[] = [];
-    if (storeId && storeId !== 'all') {
-      conditions.push(eq(paymentAuthorizations.storeId, storeId));
+    const scopedStore = this.scopedStoreId(storeId, user);
+    if (scopedStore) {
+      conditions.push(eq(paymentAuthorizations.storeId, scopedStore));
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -155,7 +178,7 @@ export class PaymentAuthorizationsService {
     };
   }
 
-  async getById(id: string) {
+  async getById(id: string, user: JwtPayload) {
     const auth = await this.db.query.paymentAuthorizations.findFirst({
       where: eq(paymentAuthorizations.id, id),
       with: {
@@ -174,10 +197,13 @@ export class PaymentAuthorizationsService {
     });
 
     if (!auth) throw new NotFoundException('Payment authorization not found');
+    this.assertStoreScope(auth.storeId, user);
     return auth;
   }
 
-  async create(dto: CreatePaymentAuthorizationDto, userId?: string) {
+  async create(dto: CreatePaymentAuthorizationDto, user: JwtPayload) {
+    this.assertStoreScope(dto.storeId, user);
+
     // Generate sequential / unique auth code
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const randSuffix = Math.floor(1000 + Math.random() * 9000);
@@ -186,6 +212,9 @@ export class PaymentAuthorizationsService {
     // Verify store
     const [store] = await this.db.select().from(stores).where(eq(stores.id, dto.storeId)).limit(1);
     if (!store) throw new NotFoundException('Store not found');
+    if (store.status !== 'active') {
+      throw new BadRequestException('Cannot create a payment authorization for an inactive branch');
+    }
 
     const [auth] = await this.db
       .insert(paymentAuthorizations)
@@ -205,7 +234,7 @@ export class PaymentAuthorizationsService {
         bankName: dto.bankName?.trim() || null,
         bankAccountNumber: dto.bankAccountNumber?.trim() || null,
         status: 'pending',
-        requestedById: userId || null,
+        requestedById: user.sub,
         notes: dto.notes?.trim() || null,
         receiptUrl: dto.receiptUrl || null,
         receiptOcrExtracted: dto.receiptOcrExtracted ?? false,
@@ -245,7 +274,7 @@ export class PaymentAuthorizationsService {
     }
   }
 
-  async approve(id: string, authorizerId: string, dto: ApprovePaymentAuthorizationDto) {
+  async approve(id: string, user: JwtPayload, dto: ApprovePaymentAuthorizationDto) {
     const [auth] = await this.db
       .select()
       .from(paymentAuthorizations)
@@ -253,6 +282,7 @@ export class PaymentAuthorizationsService {
       .limit(1);
 
     if (!auth) throw new NotFoundException('Payment authorization not found');
+    this.assertStoreScope(auth.storeId, user);
     if (auth.status !== 'pending') {
       throw new ConflictException(`Cannot approve authorization with status: ${auth.status}`);
     }
@@ -262,7 +292,7 @@ export class PaymentAuthorizationsService {
       const [staff] = await this.db
         .select()
         .from(staffProfile)
-        .where(eq(staffProfile.id, authorizerId))
+        .where(eq(staffProfile.id, user.sub))
         .limit(1);
 
       if (staff?.pinHash) {
@@ -275,7 +305,7 @@ export class PaymentAuthorizationsService {
       .update(paymentAuthorizations)
       .set({
         status: 'approved',
-        authorizedById: authorizerId,
+        authorizedById: user.sub,
         authorizedAt: new Date(),
         notes: dto.notes
           ? sql`CONCAT(${paymentAuthorizations.notes}, '\nApproval Note: ', ${dto.notes})`
@@ -293,7 +323,7 @@ export class PaymentAuthorizationsService {
     return updated;
   }
 
-  async reject(id: string, rejectorId: string, dto: RejectPaymentAuthorizationDto) {
+  async reject(id: string, user: JwtPayload, dto: RejectPaymentAuthorizationDto) {
     const [auth] = await this.db
       .select()
       .from(paymentAuthorizations)
@@ -301,6 +331,7 @@ export class PaymentAuthorizationsService {
       .limit(1);
 
     if (!auth) throw new NotFoundException('Payment authorization not found');
+    this.assertStoreScope(auth.storeId, user);
     if (auth.status !== 'pending' && auth.status !== 'approved') {
       throw new ConflictException(`Cannot reject authorization with status: ${auth.status}`);
     }
@@ -309,7 +340,7 @@ export class PaymentAuthorizationsService {
       .update(paymentAuthorizations)
       .set({
         status: 'rejected',
-        authorizedById: rejectorId,
+        authorizedById: user.sub,
         authorizedAt: new Date(),
         rejectionReason: dto.reason.trim(),
         updatedAt: new Date(),
@@ -325,7 +356,7 @@ export class PaymentAuthorizationsService {
     return updated;
   }
 
-  async disburse(id: string, disburserId: string, dto: DisbursePaymentAuthorizationDto) {
+  async disburse(id: string, user: JwtPayload, dto: DisbursePaymentAuthorizationDto) {
     return this.db.transaction(async (tx) => {
       const [auth] = await tx
         .select()
@@ -334,6 +365,7 @@ export class PaymentAuthorizationsService {
         .limit(1);
 
       if (!auth) throw new NotFoundException('Payment authorization not found');
+      this.assertStoreScope(auth.storeId, user);
       if (auth.status !== 'approved') {
         throw new ConflictException('Only approved payment authorizations can be disbursed');
       }
@@ -349,7 +381,7 @@ export class PaymentAuthorizationsService {
           description: `Disbursement: ${auth.title} - Payee: ${auth.payeeName} (${dto.transactionReference})`,
           referenceType: 'payment_authorization',
           referenceId: auth.id,
-          performedById: disburserId,
+          performedById: user.sub,
           entryDate: new Date(),
         })
         .returning();
@@ -377,7 +409,7 @@ export class PaymentAuthorizationsService {
 
           await tx.insert(invoicePayments).values({
             invoiceId: invoice.id,
-            paidById: disburserId,
+            paidById: user.sub,
             amountPesewas: auth.amountPesewas,
             method: auth.paymentMethod,
             reference: dto.transactionReference,
@@ -391,7 +423,7 @@ export class PaymentAuthorizationsService {
         await tx
           .update(expenses)
           .set({
-            approvedById: disburserId,
+            approvedById: user.sub,
             referenceNumber: dto.transactionReference,
             updatedAt: new Date(),
           })
@@ -404,7 +436,7 @@ export class PaymentAuthorizationsService {
         .set({
           status: 'disbursed',
           disbursedAt: new Date(),
-          disbursedById: disburserId,
+          disbursedById: user.sub,
           transactionReference: dto.transactionReference.trim(),
           ledgerEntryId: ledgerEntry.id,
           notes: dto.notes

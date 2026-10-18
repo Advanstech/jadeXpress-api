@@ -6,12 +6,10 @@ import {
   Param,
   Body,
   Query,
-  UseGuards,
-  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PaymentAuthorizationsService } from './payment-authorizations.service';
 import {
@@ -27,7 +25,6 @@ import {
 
 @ApiTags('Payment Authorizations')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
 @Controller('payment-authorizations')
 export class PaymentAuthorizationsController {
   constructor(
@@ -39,6 +36,7 @@ export class PaymentAuthorizationsController {
     summary: 'List payment authorizations with status, category, branch, and date filters',
   })
   async list(
+    @CurrentUser() user: JwtPayload,
     @Query('storeId') storeId?: string,
     @Query('status') status?: string,
     @Query('category') category?: string,
@@ -48,28 +46,34 @@ export class PaymentAuthorizationsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.paymentAuthorizationsService.list({
-      storeId,
-      status,
-      category,
-      search,
-      from,
-      to,
-      page: page ? parseInt(page, 10) : undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
-    });
+    return this.paymentAuthorizationsService.list(
+      {
+        storeId,
+        status,
+        category,
+        search,
+        from,
+        to,
+        page: page ? parseInt(page, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : undefined,
+      },
+      user,
+    );
   }
 
   @Get('stats')
   @ApiOperation({ summary: 'Get summary metrics and KPIs for payment authorizations' })
-  async getStats(@Query('storeId') storeId?: string) {
-    return this.paymentAuthorizationsService.getStats(storeId);
+  async getStats(
+    @CurrentUser() user: JwtPayload,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.paymentAuthorizationsService.getStats(storeId, user);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get details of a payment authorization including OCR receipt data' })
-  async getById(@Param('id') id: string) {
-    return this.paymentAuthorizationsService.getById(id);
+  async getById(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.paymentAuthorizationsService.getById(id, user);
   }
 
   @Post()
@@ -77,9 +81,9 @@ export class PaymentAuthorizationsController {
   async create(
     @Body(new ZodValidationPipe(createPaymentAuthorizationSchema))
     dto: CreatePaymentAuthorizationDto,
-    @Req() req: any,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.paymentAuthorizationsService.create(dto, req.user?.id);
+    return this.paymentAuthorizationsService.create(dto, user);
   }
 
   @Post('ai-scan')
@@ -97,9 +101,9 @@ export class PaymentAuthorizationsController {
     @Param('id') id: string,
     @Body(new ZodValidationPipe(approvePaymentAuthorizationSchema))
     dto: ApprovePaymentAuthorizationDto,
-    @Req() req: any,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.paymentAuthorizationsService.approve(id, req.user?.id, dto);
+    return this.paymentAuthorizationsService.approve(id, user, dto);
   }
 
   @Put(':id/reject')
@@ -109,9 +113,9 @@ export class PaymentAuthorizationsController {
     @Param('id') id: string,
     @Body(new ZodValidationPipe(rejectPaymentAuthorizationSchema))
     dto: RejectPaymentAuthorizationDto,
-    @Req() req: any,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.paymentAuthorizationsService.reject(id, req.user?.id, dto);
+    return this.paymentAuthorizationsService.reject(id, user, dto);
   }
 
   @Put(':id/disburse')
@@ -123,8 +127,8 @@ export class PaymentAuthorizationsController {
     @Param('id') id: string,
     @Body(new ZodValidationPipe(disbursePaymentAuthorizationSchema))
     dto: DisbursePaymentAuthorizationDto,
-    @Req() req: any,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.paymentAuthorizationsService.disburse(id, req.user?.id, dto);
+    return this.paymentAuthorizationsService.disburse(id, user, dto);
   }
 }
