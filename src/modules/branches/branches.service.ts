@@ -230,8 +230,11 @@ export class BranchesService {
     return updated;
   }
 
-  async getBranchInventory(id: string, search?: string, limit = 50) {
-    let whereConditions: any[] = [eq(stockItems.storeId, id)];
+  async getBranchInventory(id: string, search?: string, limit = 1000) {
+    let whereConditions: any[] = [
+      eq(stockItems.storeId, id),
+      eq(products.status, 'active'),
+    ];
 
     if (search) {
       whereConditions.push(
@@ -260,7 +263,7 @@ export class BranchesService {
       .from(stockItems)
       .innerJoin(products, eq(stockItems.productId, products.id))
       .where(and(...whereConditions))
-      .orderBy(desc(stockItems.quantityOnHand))
+      .orderBy(desc(stockItems.quantityOnHand), products.name)
       .limit(limit);
 
     return items;

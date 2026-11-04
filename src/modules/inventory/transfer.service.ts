@@ -231,12 +231,13 @@ export class TransferService {
   }
 
   async createTransfer(data: CreateTransferDto, userId: string, scopedStoreId: string, role: string) {
-    const elevated = ['owner', 'root', 'super_admin'].includes((role || '').toLowerCase());
+    const normalizedRole = (role || '').toLowerCase();
+    const elevated = ['owner', 'root', 'super_admin', 'manager'].includes(normalizedRole);
     if (!elevated && data.fromStoreId !== scopedStoreId) {
       throw new BadRequestException('Transfers can only be initiated from your assigned branch');
     }
     if (data.instantTransfer && !elevated) {
-      throw new BadRequestException('Instant transfers require owner or root authorization');
+      throw new BadRequestException('Instant transfers require manager, owner, or root authorization');
     }
 
     const trnNum = `TRN-${Date.now().toString().slice(-6)}`;
@@ -249,8 +250,8 @@ export class TransferService {
 
     if (!fromStore) throw new NotFoundException('Source store not found');
     if (!toStore) throw new NotFoundException('Destination store not found');
-    if (fromStore.status !== 'active') throw new BadRequestException('Source branch is not active');
-    if (toStore.status !== 'active') throw new BadRequestException('Destination branch is not active');
+    if (fromStore.status === 'inactive') throw new BadRequestException('Source branch is inactive');
+    if (toStore.status === 'inactive') throw new BadRequestException('Destination branch is inactive');
 
     if (data.fromStoreId === data.toStoreId) {
       throw new BadRequestException('Source and destination branches must be different');
