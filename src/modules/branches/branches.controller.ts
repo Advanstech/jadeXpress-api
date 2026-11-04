@@ -45,11 +45,13 @@ export class BranchesController {
     @Param('id') id: string,
     @Query('search') search?: string,
     @Query('limit') limit?: string,
+    @Query('includeCatalog') includeCatalog?: string,
   ) {
     return this.branchesService.getBranchInventory(
       id,
       search,
       limit ? parseInt(limit, 10) : undefined,
+      includeCatalog === 'true',
     );
   }
 

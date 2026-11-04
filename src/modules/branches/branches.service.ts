@@ -47,13 +47,15 @@ export class BranchesService {
         // 1. Stock item count & units & stock value
         const [stockStats] = await this.db
           .select({
-            totalProducts: sql<number>`count(distinct ${stockItems.productId})::int`,
+            totalProducts: sql<number>`count(distinct case when ${stockItems.quantityOnHand} > 0 then ${stockItems.productId} end)::int`,
+            assignedProducts: sql<number>`count(distinct ${stockItems.productId})::int`,
             totalStockUnits: sql<number>`coalesce(sum(${stockItems.quantityOnHand}), 0)::int`,
             totalStockValuePesewas: sql<number>`coalesce(sum(${stockItems.quantityOnHand} * ${products.costPricePesewas}), 0)::bigint`,
+            totalRetailValuePesewas: sql<number>`coalesce(sum(${stockItems.quantityOnHand} * ${products.sellingPricePesewas}), 0)::bigint`,
           })
           .from(stockItems)
           .innerJoin(products, eq(stockItems.productId, products.id))
-          .where(eq(stockItems.storeId, branch.id));
+          .where(and(eq(stockItems.storeId, branch.id), eq(products.status, 'active')));
 
         // 2. Active staff count
         const [staffStats] = await this.db
@@ -110,8 +112,10 @@ export class BranchesService {
         return {
           ...branch,
           totalProducts: Number(stockStats?.totalProducts ?? 0),
+          assignedProducts: Number(stockStats?.assignedProducts ?? 0),
           totalStockUnits: Number(stockStats?.totalStockUnits ?? 0),
           totalStockValuePesewas: Number(stockStats?.totalStockValuePesewas ?? 0),
+          totalRetailValuePesewas: Number(stockStats?.totalRetailValuePesewas ?? 0),
           staffCount: Number(staffStats?.staffCount ?? 0),
           activeInboundTransfers: Number(inbound?.count ?? 0),
           activeOutboundTransfers: Number(outbound?.count ?? 0),
@@ -131,15 +135,17 @@ export class BranchesService {
     // Aggregate stats
     const [stockStats] = await this.db
       .select({
-        totalProducts: sql<number>`count(distinct ${stockItems.productId})::int`,
+        totalProducts: sql<number>`count(distinct case when ${stockItems.quantityOnHand} > 0 then ${stockItems.productId} end)::int`,
+        assignedProducts: sql<number>`count(distinct ${stockItems.productId})::int`,
         totalStockUnits: sql<number>`coalesce(sum(${stockItems.quantityOnHand}), 0)::int`,
         totalStockValuePesewas: sql<number>`coalesce(sum(${stockItems.quantityOnHand} * ${products.costPricePesewas}), 0)::bigint`,
-        lowStockItems: sql<number>`count(case when ${stockItems.quantityOnHand} <= ${products.reorderPoint} then 1 end)::int`,
+        totalRetailValuePesewas: sql<number>`coalesce(sum(${stockItems.quantityOnHand} * ${products.sellingPricePesewas}), 0)::bigint`,
+        lowStockItems: sql<number>`count(case when ${stockItems.quantityOnHand} > 0 and ${stockItems.quantityOnHand} <= ${products.reorderPoint} then 1 end)::int`,
         outOfStockItems: sql<number>`count(case when ${stockItems.quantityOnHand} = 0 then 1 end)::int`,
       })
       .from(stockItems)
       .innerJoin(products, eq(stockItems.productId, products.id))
-      .where(eq(stockItems.storeId, branch.id));
+      .where(and(eq(stockItems.storeId, branch.id), eq(products.status, 'active')));
 
     const staffMembers = await this.db
       .select({
@@ -157,8 +163,10 @@ export class BranchesService {
     return {
       ...branch,
       totalProducts: Number(stockStats?.totalProducts ?? 0),
+      assignedProducts: Number(stockStats?.assignedProducts ?? 0),
       totalStockUnits: Number(stockStats?.totalStockUnits ?? 0),
       totalStockValuePesewas: Number(stockStats?.totalStockValuePesewas ?? 0),
+      totalRetailValuePesewas: Number(stockStats?.totalRetailValuePesewas ?? 0),
       lowStockItems: Number(stockStats?.lowStockItems ?? 0),
       outOfStockItems: Number(stockStats?.outOfStockItems ?? 0),
       staffMembers,
@@ -230,10 +238,14 @@ export class BranchesService {
     return updated;
   }
 
-  async getBranchInventory(id: string, search?: string, limit = 2000) {
+  async getBranchInventory(id: string, search?: string, limit = 2000, includeCatalog = false) {
     let whereConditions: any[] = [
       eq(products.status, 'active'),
     ];
+
+    if (!includeCatalog) {
+      whereConditions.push(eq(stockItems.storeId, id));
+    }
 
     if (search) {
       whereConditions.push(
@@ -246,32 +258,52 @@ export class BranchesService {
       );
     }
 
-    const items = await this.db
-      .select({
-        id: sql<string>`coalesce(${stockItems.id}::text, ${products.id}::text)`,
-        productId: products.id,
-        productName: products.name,
-        sku: products.sku,
-        barcode: products.barcode,
-        costPricePesewas: products.costPricePesewas,
-        sellingPricePesewas: products.sellingPricePesewas,
-        quantityOnHand: sql<number>`coalesce(${stockItems.quantityOnHand}, 0)::int`,
-        reorderPoint: products.reorderPoint,
-        imageUrl: products.imageUrl,
-        lastMovementAt: stockItems.lastMovementAt,
-      })
-      .from(products)
-      .leftJoin(
-        stockItems,
-        and(
-          eq(stockItems.productId, products.id),
-          eq(stockItems.storeId, id),
-        ),
-      )
-      .where(and(...whereConditions))
-      .orderBy(desc(sql`coalesce(${stockItems.quantityOnHand}, 0)`), products.name)
-      .limit(limit);
+    const selectFields = {
+      id: sql<string>`coalesce(${stockItems.id}::text, ${products.id}::text)`,
+      productId: products.id,
+      productName: products.name,
+      name: products.name,
+      sku: products.sku,
+      barcode: products.barcode,
+      description: products.description,
+      categoryId: products.categoryId,
+      primarySupplierId: products.primarySupplierId,
+      unit: products.unit,
+      packSize: products.packSize,
+      taxable: products.taxable,
+      requiresPrescription: products.requiresPrescription,
+      costPricePesewas: products.costPricePesewas,
+      sellingPricePesewas: products.sellingPricePesewas,
+      quantityOnHand: sql<number>`coalesce(${stockItems.quantityOnHand}, 0)::int`,
+      stockLevel: sql<number>`coalesce(${stockItems.quantityOnHand}, 0)::int`,
+      reorderPoint: products.reorderPoint,
+      reorderQty: products.reorderQty,
+      imageUrl: products.imageUrl,
+      lastMovementAt: stockItems.lastMovementAt,
+    };
 
-    return items;
+    if (includeCatalog) {
+      return this.db
+        .select(selectFields)
+        .from(products)
+        .leftJoin(
+          stockItems,
+          and(
+            eq(stockItems.productId, products.id),
+            eq(stockItems.storeId, id),
+          ),
+        )
+        .where(and(...whereConditions))
+        .orderBy(desc(sql`coalesce(${stockItems.quantityOnHand}, 0)`), products.name)
+        .limit(limit);
+    }
+
+    return this.db
+      .select(selectFields)
+      .from(stockItems)
+      .innerJoin(products, eq(stockItems.productId, products.id))
+      .where(and(...whereConditions))
+      .orderBy(desc(stockItems.quantityOnHand), products.name)
+      .limit(limit);
   }
 }
