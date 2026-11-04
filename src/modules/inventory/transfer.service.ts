@@ -78,7 +78,7 @@ export class TransferService {
         items: {
           with: {
             product: {
-              columns: { id: true, name: true, sku: true, imageUrl: true, costPricePesewas: true },
+              columns: { id: true, name: true, sku: true, imageUrl: true, costPricePesewas: true, sellingPricePesewas: true },
             },
           },
         },
@@ -258,21 +258,57 @@ export class TransferService {
     }
 
     const productRows = await this.db
-      .select({ id: products.id, costPricePesewas: products.costPricePesewas })
+      .select({
+        id: products.id,
+        costPricePesewas: products.costPricePesewas,
+        sellingPricePesewas: products.sellingPricePesewas,
+      })
       .from(products)
       .where(inArray(products.id, data.items.map((item) => item.productId)));
-    const costs = new Map(productRows.map((product) => [product.id, product.costPricePesewas]));
-    if (costs.size !== new Set(data.items.map((item) => item.productId)).size) {
+    const productMap = new Map(productRows.map((product) => [product.id, product]));
+    if (productMap.size !== new Set(data.items.map((item) => item.productId)).size) {
       throw new NotFoundException('One or more transfer products do not exist');
     }
-    const resolvedItems = data.items.map((item) => ({
-      ...item,
-      unitCostPesewas: costs.get(item.productId) ?? 0,
-    }));
+    const resolvedItems = data.items.map((item) => {
+      const dbProd = productMap.get(item.productId)!;
+      const unitCostPesewas =
+        item.unitCostPesewas !== undefined && item.unitCostPesewas > 0
+          ? item.unitCostPesewas
+          : (dbProd.costPricePesewas ?? 0);
+      const sellingPricePesewas =
+        item.sellingPricePesewas !== undefined && item.sellingPricePesewas > 0
+          ? item.sellingPricePesewas
+          : (dbProd.sellingPricePesewas ?? 0);
+      return {
+        ...item,
+        unitCostPesewas,
+        sellingPricePesewas,
+        dbCostPesewas: dbProd.costPricePesewas,
+        dbSellingPesewas: dbProd.sellingPricePesewas,
+      };
+    });
 
     return this.db.transaction(async (tx) => {
       const isInstant = Boolean(data.instantTransfer);
       const initialStatus = isInstant ? 'approved' : 'pending_approval';
+
+      // Sync any adjusted cost price or selling price back to the master product catalog
+      for (const item of resolvedItems) {
+        const patch: Record<string, any> = {};
+        if (item.unitCostPesewas > 0 && item.unitCostPesewas !== item.dbCostPesewas) {
+          patch.costPricePesewas = item.unitCostPesewas;
+        }
+        if (item.sellingPricePesewas > 0 && item.sellingPricePesewas !== item.dbSellingPesewas) {
+          patch.sellingPricePesewas = item.sellingPricePesewas;
+        }
+        if (Object.keys(patch).length > 0) {
+          patch.updatedAt = new Date();
+          await tx
+            .update(products)
+            .set(patch)
+            .where(eq(products.id, item.productId));
+        }
+      }
 
       // 1. Create transfer record
       const [transfer] = await tx
@@ -318,25 +354,31 @@ export class TransferService {
           });
 
           const currentQty = sourceStock ? sourceStock.quantityOnHand : 0;
-          if (currentQty < item.quantityRequested) {
+          if (!elevated && currentQty < item.quantityRequested) {
             throw new ConflictException(
               `Insufficient stock for product in source branch. Available: ${currentQty}, Requested: ${item.quantityRequested}`,
             );
           }
 
-          // Deduct from source store
-          const [updatedSource] = await tx
-            .update(stockItems)
-            .set({
-              quantityOnHand: sql`${stockItems.quantityOnHand} - ${item.quantityRequested}`,
-              updatedAt: new Date(),
+          let afterSourceQty = Math.max(0, currentQty - item.quantityRequested);
+          if (sourceStock) {
+            const [updatedSource] = await tx
+              .update(stockItems)
+              .set({
+                quantityOnHand: afterSourceQty,
+                updatedAt: new Date(),
+                lastMovementAt: new Date(),
+              })
+              .where(eq(stockItems.id, sourceStock.id))
+              .returning();
+            afterSourceQty = updatedSource?.quantityOnHand ?? afterSourceQty;
+          } else {
+            await tx.insert(stockItems).values({
+              storeId: transfer.fromStoreId,
+              productId: item.productId,
+              quantityOnHand: 0,
               lastMovementAt: new Date(),
-            })
-            .where(and(eq(stockItems.id, sourceStock!.id), gte(stockItems.quantityOnHand, item.quantityRequested)))
-            .returning();
-
-          if (!updatedSource) {
-            throw new ConflictException('Source stock changed during transfer. Refresh and try again.');
+            });
           }
 
           await this.moveBatches(
@@ -356,7 +398,7 @@ export class TransferService {
             type: 'transfer_out',
             quantityChange: -item.quantityRequested,
             quantityBefore: currentQty,
-            quantityAfter: updatedSource.quantityOnHand,
+            quantityAfter: afterSourceQty,
             referenceType: 'transfer',
             referenceId: transfer.id,
             performedById: userId,
@@ -469,7 +511,7 @@ export class TransferService {
       });
 
       if (!transfer) throw new NotFoundException('Transfer not found');
-      const elevated = ['owner', 'root', 'super_admin'].includes((role || '').toLowerCase());
+      const elevated = ['owner', 'root', 'super_admin', 'manager'].includes((role || '').toLowerCase());
       if (!elevated && transfer.fromStoreId !== scopedStoreId && transfer.toStoreId !== scopedStoreId) {
         throw new BadRequestException('You cannot approve a transfer outside your branch');
       }
@@ -477,10 +519,38 @@ export class TransferService {
         throw new ConflictException(`Cannot approve transfer in status: ${transfer.status}`);
       }
 
+      const itemOverrides = new Map(
+        (data.items ?? []).map((it) => [it.productId, it]),
+      );
+
       let totalCostValuePesewas = 0;
 
       for (const item of transfer.items) {
-        totalCostValuePesewas += (item.quantityRequested || 0) * (item.unitCostPesewas || 0);
+        const override = itemOverrides.get(item.productId);
+        const finalQty =
+          override?.quantityRequested && override.quantityRequested > 0
+            ? override.quantityRequested
+            : item.quantityRequested;
+        const finalCostPesewas =
+          override?.unitCostPesewas !== undefined && override.unitCostPesewas > 0
+            ? override.unitCostPesewas
+            : item.unitCostPesewas;
+        const finalSellingPesewas =
+          override?.sellingPricePesewas !== undefined && override.sellingPricePesewas > 0
+            ? override.sellingPricePesewas
+            : undefined;
+
+        if (finalCostPesewas > 0 || finalSellingPesewas !== undefined) {
+          const prodPatch: Record<string, any> = { updatedAt: new Date() };
+          if (finalCostPesewas > 0) prodPatch.costPricePesewas = finalCostPesewas;
+          if (finalSellingPesewas !== undefined) prodPatch.sellingPricePesewas = finalSellingPesewas;
+          await tx
+            .update(products)
+            .set(prodPatch)
+            .where(eq(products.id, item.productId));
+        }
+
+        totalCostValuePesewas += (finalQty || 0) * (finalCostPesewas || 0);
 
         // Fetch source stock
         const sourceStock = await tx.query.stockItems.findFirst({
@@ -491,25 +561,31 @@ export class TransferService {
         });
 
         const currentQty = sourceStock ? sourceStock.quantityOnHand : 0;
-        if (currentQty < item.quantityRequested) {
+        if (!elevated && currentQty < finalQty) {
           throw new ConflictException(
-            `Insufficient stock for product ${item.productId} in source branch. Available: ${currentQty}, Requested: ${item.quantityRequested}`,
+            `Insufficient stock for product ${item.productId} in source branch. Available: ${currentQty}, Requested: ${finalQty}`,
           );
         }
 
-        // Deduct from source branch
-        const [updatedSource] = await tx
-          .update(stockItems)
-          .set({
-            quantityOnHand: sql`${stockItems.quantityOnHand} - ${item.quantityRequested}`,
-            updatedAt: new Date(),
+        let afterSourceQty = Math.max(0, currentQty - finalQty);
+        if (sourceStock) {
+          const [updatedSource] = await tx
+            .update(stockItems)
+            .set({
+              quantityOnHand: afterSourceQty,
+              updatedAt: new Date(),
+              lastMovementAt: new Date(),
+            })
+            .where(eq(stockItems.id, sourceStock.id))
+            .returning();
+          afterSourceQty = updatedSource?.quantityOnHand ?? afterSourceQty;
+        } else {
+          await tx.insert(stockItems).values({
+            storeId: transfer.fromStoreId,
+            productId: item.productId,
+            quantityOnHand: 0,
             lastMovementAt: new Date(),
-          })
-          .where(and(eq(stockItems.id, sourceStock!.id), gte(stockItems.quantityOnHand, item.quantityRequested)))
-          .returning();
-
-        if (!updatedSource) {
-          throw new ConflictException('Source stock changed during approval. Refresh and try again.');
+          });
         }
 
         await this.moveBatches(
@@ -517,8 +593,8 @@ export class TransferService {
           item.productId,
           transfer.fromStoreId,
           transfer.toStoreId,
-          item.quantityRequested,
-          item.unitCostPesewas,
+          finalQty,
+          finalCostPesewas,
           transfer.transferNumber,
         );
 
@@ -527,9 +603,9 @@ export class TransferService {
           productId: item.productId,
           storeId: transfer.fromStoreId,
           type: 'transfer_out',
-          quantityChange: -item.quantityRequested,
+          quantityChange: -finalQty,
           quantityBefore: currentQty,
-          quantityAfter: updatedSource.quantityOnHand,
+          quantityAfter: afterSourceQty,
           referenceType: 'transfer',
           referenceId: transfer.id,
           performedById: userId,
@@ -549,7 +625,7 @@ export class TransferService {
           const [updatedDest] = await tx
             .update(stockItems)
             .set({
-              quantityOnHand: sql`${stockItems.quantityOnHand} + ${item.quantityRequested}`,
+              quantityOnHand: sql`${stockItems.quantityOnHand} + ${finalQty}`,
               updatedAt: new Date(),
               lastMovementAt: new Date(),
             })
@@ -562,7 +638,7 @@ export class TransferService {
             .values({
               storeId: transfer.toStoreId,
               productId: item.productId,
-              quantityOnHand: item.quantityRequested,
+              quantityOnHand: finalQty,
               lastMovementAt: new Date(),
             })
             .returning();
@@ -574,7 +650,7 @@ export class TransferService {
           productId: item.productId,
           storeId: transfer.toStoreId,
           type: 'transfer_in',
-          quantityChange: item.quantityRequested,
+          quantityChange: finalQty,
           quantityBefore: destStock ? destStock.quantityOnHand : 0,
           quantityAfter: newDestQty,
           referenceType: 'transfer',
@@ -583,12 +659,14 @@ export class TransferService {
           notes: data.notes || `Transfer ${transfer.transferNumber} from ${transfer.fromStore.name}`,
         });
 
-        // Update item quantity received
+        // Update item quantity received and cost
         await tx
           .update(stockTransferItems)
           .set({
-            quantityDispatched: item.quantityRequested,
-            quantityReceived: item.quantityRequested,
+            quantityRequested: finalQty,
+            quantityDispatched: finalQty,
+            quantityReceived: finalQty,
+            unitCostPesewas: finalCostPesewas,
           })
           .where(eq(stockTransferItems.id, item.id));
       }

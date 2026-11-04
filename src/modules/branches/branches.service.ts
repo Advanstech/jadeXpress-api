@@ -230,9 +230,8 @@ export class BranchesService {
     return updated;
   }
 
-  async getBranchInventory(id: string, search?: string, limit = 1000) {
+  async getBranchInventory(id: string, search?: string, limit = 2000) {
     let whereConditions: any[] = [
-      eq(stockItems.storeId, id),
       eq(products.status, 'active'),
     ];
 
@@ -242,28 +241,35 @@ export class BranchesService {
           ilike(products.name, `%${search}%`),
           ilike(products.sku, `%${search}%`),
           ilike(products.barcode, `%${search}%`),
+          ilike(products.brand, `%${search}%`),
         ),
       );
     }
 
     const items = await this.db
       .select({
-        id: stockItems.id,
+        id: sql<string>`coalesce(${stockItems.id}::text, ${products.id}::text)`,
         productId: products.id,
         productName: products.name,
         sku: products.sku,
         barcode: products.barcode,
         costPricePesewas: products.costPricePesewas,
         sellingPricePesewas: products.sellingPricePesewas,
-        quantityOnHand: stockItems.quantityOnHand,
+        quantityOnHand: sql<number>`coalesce(${stockItems.quantityOnHand}, 0)::int`,
         reorderPoint: products.reorderPoint,
         imageUrl: products.imageUrl,
         lastMovementAt: stockItems.lastMovementAt,
       })
-      .from(stockItems)
-      .innerJoin(products, eq(stockItems.productId, products.id))
+      .from(products)
+      .leftJoin(
+        stockItems,
+        and(
+          eq(stockItems.productId, products.id),
+          eq(stockItems.storeId, id),
+        ),
+      )
       .where(and(...whereConditions))
-      .orderBy(desc(stockItems.quantityOnHand), products.name)
+      .orderBy(desc(sql`coalesce(${stockItems.quantityOnHand}, 0)`), products.name)
       .limit(limit);
 
     return items;
