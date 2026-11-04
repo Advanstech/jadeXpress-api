@@ -27,8 +27,8 @@ async function seed() {
   if (!store) {
     [store] = await db.insert(stores).values({
       organisationId: orgId,
-      code: 'ISR',
-      name: 'Accra Main Branch (Israel)',
+      code: 'DZW',
+      name: 'Dzorwulu Branch (Main)',
       city: 'Accra',
     }).returning();
     console.log('✅ Created Store:', store.name);

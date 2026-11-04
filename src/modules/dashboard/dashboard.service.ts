@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { eq, and, gte, lte, desc, sql, inArray } from 'drizzle-orm';
+import { eq, ne, and, gte, lte, desc, sql, inArray } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
   sales,
@@ -100,6 +100,7 @@ export class DashboardService {
           .where(
             and(
               eq(purchaseOrders.storeId, storeId),
+              ne(purchaseOrders.status, 'cancelled'),
               sql`${purchaseOrders.balancePesewas} > 0`
             )
           )

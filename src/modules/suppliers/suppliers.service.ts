@@ -6,6 +6,7 @@ import {
   purchaseOrders,
   purchaseItems,
   supplierInvoices,
+  invoicePayments,
   stockBatches,
   stockItems,
   stockMovements,
@@ -481,8 +482,16 @@ export class SuppliersService {
       // Delete the invoice
       await tx.delete(supplierInvoices).where(eq(supplierInvoices.id, id));
 
-      // Delete the associated purchase order (purchaseItems will be cascaded)
+      // Delete the associated purchase order and its AP ledger entry
       if (invoice.purchaseOrderId) {
+        await tx
+          .delete(ledgerEntries)
+          .where(
+            and(
+              eq(ledgerEntries.referenceType, 'purchase_invoice'),
+              eq(ledgerEntries.referenceId, invoice.purchaseOrderId),
+            ),
+          );
         await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, invoice.purchaseOrderId));
       }
 
@@ -593,15 +602,17 @@ export class SuppliersService {
         const [poItem] = await tx.select().from(purchaseItems).where(eq(purchaseItems.id, item.purchaseItemId)).limit(1);
         if (!poItem) continue;
 
+        const productChanged = item.productId !== poItem.productId;
         const deltaQty = item.quantityReceived - poItem.quantityReceived;
         const oldTotalCost = poItem.totalCostPesewas;
         const newTotalCost = item.quantityReceived * item.unitCostPesewas;
         const deltaCost = newTotalCost - oldTotalCost;
         totalCostDiff += deltaCost;
 
-        // 1. Update purchaseItem
+        // 1. Update purchaseItem (including productId if re-linked)
         await tx.update(purchaseItems)
           .set({
+            productId: item.productId,
             quantityOrdered: item.quantityReceived,
             quantityReceived: item.quantityReceived,
             unitCostPesewas: item.unitCostPesewas,
@@ -609,8 +620,12 @@ export class SuppliersService {
           })
           .where(eq(purchaseItems.id, item.purchaseItemId));
 
-        // 2. Update Product name and selling price (globally)
-        const productUpdates: any = { name: item.name };
+        // 2. Update Product name, cost price, and selling price (globally)
+        const productUpdates: any = {
+          name: item.name,
+          costPricePesewas: item.unitCostPesewas,
+          updatedAt: new Date(),
+        };
         if (item.sellingPricePesewas !== undefined) {
           productUpdates.sellingPricePesewas = item.sellingPricePesewas;
         }
@@ -622,27 +637,92 @@ export class SuppliersService {
         }
         await tx.update(products).set(productUpdates).where(eq(products.id, item.productId));
 
-        // 3. Update stockBatches and stockItems (if quantity or cost changed)
-        if (deltaQty !== 0 || item.unitCostPesewas !== poItem.unitCostPesewas) {
-          const [batch] = await tx.select().from(stockBatches).where(and(eq(stockBatches.purchaseOrderId, id), eq(stockBatches.productId, item.productId))).limit(1);
+        // 3. Update stockBatches, stockItems, and stockMovements
+        if (productChanged || deltaQty !== 0 || item.unitCostPesewas !== poItem.unitCostPesewas) {
+          const [batch] = await tx
+            .select()
+            .from(stockBatches)
+            .where(and(eq(stockBatches.purchaseOrderId, id), eq(stockBatches.productId, poItem.productId)))
+            .limit(1);
+
           if (batch) {
-             const newQtyReceived = batch.quantityReceived + deltaQty;
-             const newQtyRemaining = Math.max(0, batch.quantityRemaining + deltaQty);
-             await tx.update(stockBatches)
-               .set({
-                 quantityReceived: newQtyReceived,
-                 quantityRemaining: newQtyRemaining,
-                 costPricePesewas: item.unitCostPesewas
-               })
-               .where(eq(stockBatches.id, batch.id));
+            const newQtyReceived = Math.max(0, batch.quantityReceived + deltaQty);
+            const newQtyRemaining = Math.max(0, batch.quantityRemaining + deltaQty);
+            await tx.update(stockBatches)
+              .set({
+                productId: item.productId,
+                quantityReceived: newQtyReceived,
+                quantityRemaining: newQtyRemaining,
+                costPricePesewas: item.unitCostPesewas,
+              })
+              .where(eq(stockBatches.id, batch.id));
+
+            await tx.update(stockMovements)
+              .set({
+                productId: item.productId,
+                quantityChange: newQtyReceived,
+                quantityAfter: sql`${stockMovements.quantityBefore} + ${newQtyReceived}`,
+                costPricePesewas: item.unitCostPesewas,
+              })
+              .where(
+                and(
+                  eq(stockMovements.referenceType, 'purchase'),
+                  eq(stockMovements.referenceId, id),
+                  eq(stockMovements.batchId, batch.id),
+                ),
+              );
           }
 
-          if (deltaQty !== 0) {
+          if (productChanged) {
+            // Decrement old product's stock on hand
+            if (poItem.quantityReceived > 0) {
+              await tx.update(stockItems)
+                .set({
+                  quantityOnHand: sql`GREATEST(${stockItems.quantityOnHand} - ${poItem.quantityReceived}, 0)`,
+                  lastMovementAt: new Date(),
+                  updatedAt: new Date(),
+                })
+                .where(and(eq(stockItems.storeId, po.storeId), eq(stockItems.productId, poItem.productId)));
+            }
+            // Increment or insert new product's stock on hand
+            const [newStockItem] = await tx
+              .select()
+              .from(stockItems)
+              .where(and(eq(stockItems.storeId, po.storeId), eq(stockItems.productId, item.productId)))
+              .limit(1);
+            if (newStockItem) {
+              await tx.update(stockItems)
+                .set({
+                  quantityOnHand: sql`${stockItems.quantityOnHand} + ${item.quantityReceived}`,
+                  lastMovementAt: new Date(),
+                  updatedAt: new Date(),
+                })
+                .where(eq(stockItems.id, newStockItem.id));
+            } else {
+              await tx.insert(stockItems).values({
+                productId: item.productId,
+                storeId: po.storeId,
+                quantityOnHand: item.quantityReceived,
+                lastMovementAt: new Date(),
+              });
+            }
+          } else if (deltaQty !== 0) {
             const [stockItem] = await tx.select().from(stockItems).where(and(eq(stockItems.storeId, po.storeId), eq(stockItems.productId, item.productId))).limit(1);
             if (stockItem) {
-               await tx.update(stockItems)
-                 .set({ quantityOnHand: sql`${stockItems.quantityOnHand} + ${deltaQty}` })
-                 .where(eq(stockItems.id, stockItem.id));
+              await tx.update(stockItems)
+                .set({
+                  quantityOnHand: sql`GREATEST(${stockItems.quantityOnHand} + ${deltaQty}, 0)`,
+                  lastMovementAt: new Date(),
+                  updatedAt: new Date(),
+                })
+                .where(eq(stockItems.id, stockItem.id));
+            } else if (item.quantityReceived > 0) {
+              await tx.insert(stockItems).values({
+                productId: item.productId,
+                storeId: po.storeId,
+                quantityOnHand: item.quantityReceived,
+                lastMovementAt: new Date(),
+              });
             }
           }
         }
@@ -685,6 +765,16 @@ export class SuppliersService {
           })
           .where(eq(supplierInvoices.id, invoice.id));
       }
+
+      // 6. Sync Accounts Payable Ledger Entry if one exists for this PO
+      await tx.update(ledgerEntries)
+        .set({ amountPesewas: newPoTotal })
+        .where(
+          and(
+            eq(ledgerEntries.referenceType, 'purchase_invoice'),
+            eq(ledgerEntries.referenceId, id),
+          ),
+        );
     });
 
     return { success: true };
@@ -845,7 +935,36 @@ export class SuppliersService {
         })
         .where(eq(purchaseOrders.id, id));
 
-      // 2. Ledger Entry — single debit (cash outflow). referenceId is a UUID
+      // 2. Sync associated Supplier Invoice balances and record invoicePayment
+      const [invoice] = await tx
+        .select()
+        .from(supplierInvoices)
+        .where(eq(supplierInvoices.purchaseOrderId, id))
+        .limit(1);
+
+      if (invoice) {
+        const invNewPaid = invoice.paidAmountPesewas + dto.amountPesewas;
+        const invNewBalance = Math.max(0, invoice.totalAmountPesewas - invNewPaid);
+        await tx
+          .update(supplierInvoices)
+          .set({
+            paidAmountPesewas: invNewPaid,
+            balancePesewas: invNewBalance,
+            updatedAt: new Date(),
+          })
+          .where(eq(supplierInvoices.id, invoice.id));
+
+        await tx.insert(invoicePayments).values({
+          invoiceId: invoice.id,
+          paidById: staffId,
+          amountPesewas: dto.amountPesewas,
+          method: dto.paymentMethod,
+          reference: dto.reference,
+          notes: dto.notes,
+        });
+      }
+
+      // 3. Ledger Entry — single debit (cash outflow). referenceId is a UUID
       // column — store the PO id; the free-text reference goes in description.
       await tx.insert(ledgerEntries).values({
         storeId: po.storeId,
@@ -977,15 +1096,23 @@ export class SuppliersService {
         .set({
           approvedById: staffId,
           status: 'invoiced', // Approved and ready for payment
-          deliveredAt: fullyReceived ? new Date() : undefined,
+          deliveredAt: fullyReceived ? (po.deliveredAt ?? new Date()) : undefined,
           updatedAt: new Date(),
         })
         .where(eq(purchaseOrders.id, id))
         .returning();
 
-      // Ledger Entry (Record Accounts Payable / Cost of Goods)
-      // Only create if no AP entry exists yet — receiveGoods may have already
-      // written one when the goods were auto-received by the invoice wizard.
+      // Mark linked supplier invoice as confirmed
+      await tx
+        .update(supplierInvoices)
+        .set({
+          ocrConfirmed: true,
+          confirmedById: staffId,
+          updatedAt: new Date(),
+        })
+        .where(eq(supplierInvoices.purchaseOrderId, id));
+
+      // Ledger Entry (Record / Sync Accounts Payable / Cost of Goods)
       const existingAp = await tx
         .select({ id: ledgerEntries.id })
         .from(ledgerEntries)
@@ -1002,12 +1129,20 @@ export class SuppliersService {
           storeId: po.storeId,
           entryType: 'credit', // Liability increases
           category: 'cost_of_goods',
-          amountPesewas: po.totalPesewas,
+          amountPesewas: approved.totalPesewas,
           description: `Invoice Approved (AP) - PO #${po.poNumber}`,
           referenceType: 'purchase_invoice',
           referenceId: po.id,
           performedById: staffId,
         });
+      } else {
+        await tx
+          .update(ledgerEntries)
+          .set({
+            amountPesewas: approved.totalPesewas,
+            description: `Invoice Approved (AP) - PO #${po.poNumber}`,
+          })
+          .where(eq(ledgerEntries.id, existingAp[0].id));
       }
 
       return { ...approved, items: updatedPoItems };
@@ -1015,21 +1150,92 @@ export class SuppliersService {
   }
 
   async rejectPurchaseOrder(id: string, staffId: string, storeId?: string, notes?: string) {
-    const [po] = await this.db
-      .update(purchaseOrders)
-      .set({
-        approvedById: null,
-        status: 'cancelled', // Reverting or cancelling
-        updatedAt: new Date(),
-      })
+    const [existingPo] = await this.db
+      .select()
+      .from(purchaseOrders)
       .where(
         storeId
           ? and(eq(purchaseOrders.id, id), eq(purchaseOrders.storeId, storeId))
           : eq(purchaseOrders.id, id),
       )
-      .returning();
+      .limit(1);
 
-    if (!po) throw new NotFoundException('Purchase order not found');
-    return po;
+    if (!existingPo) throw new NotFoundException('Purchase order not found');
+    if (existingPo.paidAmountPesewas > 0 || existingPo.paymentStatus === 'paid' || existingPo.paymentStatus === 'partial') {
+      throw new BadRequestException('Cannot reject a purchase order that already has payments recorded');
+    }
+
+    return await this.db.transaction(async (tx) => {
+      // Reverse any auto-received stock batches that have not been sold
+      const batches = await tx
+        .select()
+        .from(stockBatches)
+        .where(eq(stockBatches.purchaseOrderId, existingPo.id));
+
+      const reversalByProduct = new Map<string, number>();
+      for (const b of batches) {
+        if (b.quantityRemaining <= 0) continue;
+        reversalByProduct.set(
+          b.productId,
+          (reversalByProduct.get(b.productId) ?? 0) + b.quantityRemaining,
+        );
+      }
+
+      for (const [productId, qty] of reversalByProduct) {
+        await tx
+          .update(stockItems)
+          .set({
+            quantityOnHand: sql`GREATEST(${stockItems.quantityOnHand} - ${qty}, 0)`,
+            lastMovementAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(and(eq(stockItems.productId, productId), eq(stockItems.storeId, existingPo.storeId)));
+      }
+
+      if (batches.length > 0) {
+        await tx
+          .delete(stockMovements)
+          .where(and(eq(stockMovements.referenceType, 'purchase'), eq(stockMovements.referenceId, existingPo.id)));
+        await tx.delete(stockBatches).where(eq(stockBatches.purchaseOrderId, existingPo.id));
+        await tx
+          .update(purchaseItems)
+          .set({ quantityReceived: 0 })
+          .where(eq(purchaseItems.purchaseOrderId, existingPo.id));
+      }
+
+      // Remove AP ledger entry for rejected PO
+      await tx
+        .delete(ledgerEntries)
+        .where(
+          and(
+            eq(ledgerEntries.referenceType, 'purchase_invoice'),
+            eq(ledgerEntries.referenceId, existingPo.id),
+          ),
+        );
+
+      // Zero out invoice balance on rejection
+      await tx
+        .update(supplierInvoices)
+        .set({
+          balancePesewas: 0,
+          ocrConfirmed: false,
+          updatedAt: new Date(),
+        })
+        .where(eq(supplierInvoices.purchaseOrderId, existingPo.id));
+
+      const [po] = await tx
+        .update(purchaseOrders)
+        .set({
+          approvedById: null,
+          status: 'cancelled',
+          balancePesewas: 0,
+          notes: notes ? `${existingPo.notes ? existingPo.notes + ' | ' : ''}Rejected: ${notes}` : existingPo.notes,
+          updatedAt: new Date(),
+        })
+        .where(eq(purchaseOrders.id, existingPo.id))
+        .returning();
+
+      return po;
+    });
   }
 }

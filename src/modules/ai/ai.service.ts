@@ -303,21 +303,40 @@ Extract product details into a clean JSON object ONLY (no markdown formatting, n
     const geminiKey = this.config.get<string>('ai.geminiApiKey') || process.env.GEMINI_API_KEY;
     console.log('[AI OCR] Received input. Length:', imageUrl?.length ?? 0, 'Gemini key present:', !!geminiKey);
 
-    if (geminiKey && geminiKey.length > 5 && imageUrl?.length > 10) {
+    let rawBase64 = imageUrl;
+    let mimeType = 'image/jpeg';
+    if (imageUrl?.startsWith('data:')) {
+      const parts = imageUrl.split(';base64,');
+      if (parts.length === 2) {
+        mimeType = parts[0].replace('data:', '');
+        rawBase64 = parts[1];
+      }
+    }
+
+    // Normalize & compress large camera photos (EXIF auto-rotate, max 1800px JPEG)
+    // so upstream vision models don't time out or reject oversized/HEIC/WebP buffers.
+    if (rawBase64 && mimeType.startsWith('image/')) {
+      try {
+        const inputBuffer = Buffer.from(rawBase64, 'base64');
+        const optimized = await sharp(inputBuffer)
+          .rotate()
+          .resize(1800, 1800, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 85 })
+          .toBuffer();
+        rawBase64 = optimized.toString('base64');
+        mimeType = 'image/jpeg';
+      } catch (err: any) {
+        console.warn('[AI OCR] sharp normalization skipped:', err?.message);
+      }
+    }
+
+    if (geminiKey && geminiKey.length > 5 && rawBase64?.length > 10) {
       try {
         const genAI = new GoogleGenerativeAI(geminiKey);
         const model = genAI.getGenerativeModel({
           model: 'gemini-2.5-flash',
           generationConfig: { responseMimeType: 'application/json' },
         });
-
-        let rawBase64 = imageUrl;
-        let mimeType = 'image/jpeg';
-        if (imageUrl.startsWith('data:')) {
-          const parts = imageUrl.split(';base64,');
-          mimeType = parts[0].replace('data:', '');
-          rawBase64 = parts[1];
-        }
 
         const prompt = `You are an expert OCR system specializing in retail supplier invoices, receipts, and official Ghana Revenue Authority (GRA) Tax Invoices.
 Carefully read and extract all details from this invoice image, including handwritten entries and printed text.
@@ -377,18 +396,15 @@ IMPORTANT INSTRUCTIONS:
       console.warn('[AI OCR] No valid GEMINI_API_KEY or image payload — skipping Gemini');
     }
 
-    // OpenAI Fallback
+    // OpenAI Fallback (supports image/* via image_url)
     const openaiKey = this.config.get<string>('ai.openaiApiKey') || process.env.OPENAI_API_KEY;
-    if (openaiKey && openaiKey.length > 5 && imageUrl?.length > 10) {
+    if (openaiKey && openaiKey.length > 5 && rawBase64?.length > 10 && mimeType.startsWith('image/')) {
       try {
         console.log('[AI OCR] Attempting extraction with OpenAI gpt-4o-mini...');
         const OpenAI = require('openai').default;
         const openai = new OpenAI({ apiKey: openaiKey });
 
-        let dataUrl = imageUrl;
-        if (!imageUrl.startsWith('data:')) {
-          dataUrl = `data:image/jpeg;base64,${imageUrl}`;
-        }
+        const dataUrl = `data:${mimeType};base64,${rawBase64}`;
 
         const prompt = `Extract the supplier invoice from this image into a clean JSON object ONLY (no markdown, no code blocks, no explanation). Use this exact shape:
 {

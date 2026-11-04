@@ -24,11 +24,22 @@ import type {
   UpdatePurchaseOrderItemsDto,
 } from './dto/suppliers.dto';
 
+const CROSS_BRANCH_ROLES = new Set(['owner', 'super_admin', 'root']);
+
 @ApiTags('suppliers')
 @ApiBearerAuth()
 @Controller('suppliers')
 export class SuppliersController {
   constructor(private readonly suppliersService: SuppliersService) {}
+
+  private resolvePoStoreScope(user: JwtPayload, storeId?: string): string | undefined {
+    if (storeId === 'all') return undefined;
+    if (storeId && storeId !== 'current') return storeId;
+    if (user?.role && CROSS_BRANCH_ROLES.has(user.role.toLowerCase())) {
+      return undefined;
+    }
+    return user.storeId;
+  }
 
   @Get()
   list(@Query(new ZodValidationPipe(PaginationSchema)) query: any) {
@@ -57,8 +68,12 @@ export class SuppliersController {
   }
 
   @Get('purchase-orders/:id')
-  getPO(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.suppliersService.getPurchaseOrder(id, user.storeId);
+  getPO(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.suppliersService.getPurchaseOrder(id, this.resolvePoStoreScope(user, storeId));
   }
 
   @Post('purchase-orders')
@@ -68,8 +83,10 @@ export class SuppliersController {
     @Body(new ZodValidationPipe(CreatePurchaseOrderSchema)) dto: CreatePurchaseOrderDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    // Security: force the PO to the authenticated user's store
-    dto.storeId = user.storeId;
+    // Security: force the PO to the authenticated user's effective store (or fallback to dto.storeId for cross-branch owner)
+    if (user.storeId) {
+      dto.storeId = user.storeId;
+    }
     return this.suppliersService.createPurchaseOrder(dto, user.sub);
   }
 
@@ -80,7 +97,7 @@ export class SuppliersController {
     @Body(new ZodValidationPipe(ReceiveGoodsSchema)) dto: ReceiveGoodsDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.suppliersService.receiveGoods(dto, user.sub, user.storeId);
+    return this.suppliersService.receiveGoods(dto, user.sub, this.resolvePoStoreScope(user));
   }
 
   @Post('purchase-orders/:id/pay')
@@ -91,7 +108,7 @@ export class SuppliersController {
     @Body(new ZodValidationPipe(PayPurchaseOrderSchema)) dto: PayPurchaseOrderDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.suppliersService.payPurchaseOrder(id, dto, user.sub, user.storeId);
+    return this.suppliersService.payPurchaseOrder(id, dto, user.sub, this.resolvePoStoreScope(user));
   }
 
   @Put('purchase-orders/:id/items')
@@ -102,7 +119,7 @@ export class SuppliersController {
     @Body(new ZodValidationPipe(UpdatePurchaseOrderItemsSchema)) dto: UpdatePurchaseOrderItemsDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.suppliersService.updatePurchaseOrderItems(id, dto, user.sub, user.storeId);
+    return this.suppliersService.updatePurchaseOrderItems(id, dto, user.sub, this.resolvePoStoreScope(user));
   }
 
   @Put('purchase-orders/:id/approve')
@@ -113,7 +130,7 @@ export class SuppliersController {
     @Body(new ZodValidationPipe(ApprovePurchaseOrderSchema)) dto: ApprovePurchaseOrderDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.suppliersService.approvePurchaseOrder(id, user.sub, user.storeId, dto.notes, dto.items);
+    return this.suppliersService.approvePurchaseOrder(id, user.sub, this.resolvePoStoreScope(user), dto.notes, dto.items);
   }
 
   @Put('purchase-orders/:id/reject')
@@ -124,14 +141,14 @@ export class SuppliersController {
     @Body(new ZodValidationPipe(ApprovePurchaseOrderSchema)) dto: ApprovePurchaseOrderDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.suppliersService.rejectPurchaseOrder(id, user.sub, user.storeId, dto.notes);
+    return this.suppliersService.rejectPurchaseOrder(id, user.sub, this.resolvePoStoreScope(user), dto.notes);
   }
 
   @Delete('invoices/:id')
   @Roles('manager', 'owner', 'supervisor')
   @ApiOperation({ summary: 'Delete an uploaded invoice and its purchase order' })
   deleteInvoice(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.suppliersService.deleteInvoice(id, user.storeId);
+    return this.suppliersService.deleteInvoice(id, this.resolvePoStoreScope(user));
   }
 
   // ── Parameterized supplier :id subroutes ──
