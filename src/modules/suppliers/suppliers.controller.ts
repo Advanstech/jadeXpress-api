@@ -24,7 +24,7 @@ import type {
   UpdatePurchaseOrderItemsDto,
 } from './dto/suppliers.dto';
 
-const CROSS_BRANCH_ROLES = new Set(['owner', 'super_admin', 'root']);
+import { CROSS_BRANCH_ROLES } from '../../common/utils/branch-scope';
 
 @ApiTags('suppliers')
 @ApiBearerAuth()

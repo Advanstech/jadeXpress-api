@@ -5,8 +5,7 @@ import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { stores } from '../../database/schema';
 import type { JwtPayload } from '../decorators/current-user.decorator';
-
-const CROSS_BRANCH_ROLES = new Set(['owner', 'root', 'super_admin']);
+import { isCrossBranchRole } from '../utils/branch-scope';
 
 @Injectable()
 export class StoreScopeGuard implements CanActivate {
@@ -30,7 +29,7 @@ export class StoreScopeGuard implements CanActivate {
     const requestedStoreId = Array.isArray(header) ? header[0] : header;
     if (!requestedStoreId || requestedStoreId === user.storeId) return true;
 
-    if (!CROSS_BRANCH_ROLES.has((user.role || '').toLowerCase())) {
+    if (!isCrossBranchRole(user.role)) {
       throw new ForbiddenException('Your role cannot switch to another branch');
     }
 

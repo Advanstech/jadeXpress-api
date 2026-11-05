@@ -4,11 +4,12 @@ import {
   NotFoundException,
   UnauthorizedException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { eq, and, desc, sql, gte, lte, ilike, or } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
-import { staffProfile, shiftReconciliation } from '../../database/schema';
+import { staffProfile, shiftReconciliation, stores } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type { CreateStaffDto, UpdateStaffDto, ChangePinDto, ClockInDto, ClockOutDto } from './dto/staff.dto';
 
@@ -72,15 +73,11 @@ export class StaffService {
     private readonly emailService: EmailService,
   ) {}
 
-  async list(storeId: string, query: PaginationDto) {
+  async list(storeId: string | undefined, query: PaginationDto) {
     const { page, limit } = query;
     const offset = (page - 1) * limit;
-    const where = storeId
-      ? or(
-          eq(staffProfile.storeId, storeId),
-          sql`${staffProfile.role}::text IN ('owner', 'manager', 'super_admin', 'root')`,
-        )
-      : undefined;
+    // storeId undefined → network-wide (owner/manager/root); otherwise a single branch.
+    const where = storeId ? eq(staffProfile.storeId, storeId) : undefined;
 
     const [data, [{ count }]] = await Promise.all([
       this.db.select(safeSelect).from(staffProfile).where(where)
@@ -110,24 +107,18 @@ export class StaffService {
   }
 
   async getRoster(storeId?: string) {
-    let targetStoreId = storeId;
-    if (!targetStoreId) {
-      const [firstStore] = await this.db.select({ id: staffProfile.storeId }).from(staffProfile).limit(1);
-      targetStoreId = firstStore?.id;
-    }
-    
-    if (!targetStoreId) return [];
+    // No explicit branch → list active staff from every branch so each person
+    // can find their own profile on the PIN-login picker (each carries storeId).
+    const conditions = [
+      eq(staffProfile.isActive, true),
+      sql`${staffProfile.role}::text <> 'customer'`,
+    ];
+    if (storeId) conditions.push(eq(staffProfile.storeId, storeId));
 
     return this.db
       .select(rosterSelect)
       .from(staffProfile)
-      .where(
-        and(
-          eq(staffProfile.storeId, targetStoreId),
-          eq(staffProfile.isActive, true),
-          sql`${staffProfile.role}::text <> 'customer'`,
-        ),
-      )
+      .where(and(...conditions))
       .orderBy(staffProfile.firstName);
   }
 
@@ -163,6 +154,18 @@ export class StaffService {
       .limit(1);
     if (!staff) throw new NotFoundException('Staff member not found');
     return staff;
+  }
+
+  async assertActiveStore(storeId: string) {
+    const [store] = await this.db
+      .select({ id: stores.id, status: stores.status })
+      .from(stores)
+      .where(eq(stores.id, storeId))
+      .limit(1);
+    if (!store) throw new NotFoundException('Selected branch not found');
+    if (store.status !== 'active') {
+      throw new BadRequestException('Selected branch is not active');
+    }
   }
 
   async create(dto: CreateStaffDto) {

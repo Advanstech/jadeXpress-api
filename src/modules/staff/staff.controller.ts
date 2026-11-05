@@ -13,6 +13,14 @@ import {
   ClockInSchema, ClockInDto,
   ClockOutSchema, ClockOutDto,
 } from './dto/staff.dto';
+import { isCrossBranchRole } from '../../common/utils/branch-scope';
+
+/**
+ * Owner / manager / root see and manage staff network-wide (no branch filter);
+ * every other role is confined to their own assigned branch.
+ */
+const staffScope = (user: JwtPayload): string | undefined =>
+  isCrossBranchRole(user.role) ? undefined : user.storeId;
 
 @ApiTags('staff')
 @ApiBearerAuth()
@@ -22,9 +30,9 @@ export class StaffController {
 
   @Get()
   @Roles('manager', 'owner', 'supervisor', 'pharmacist', 'stock_officer')
-  @ApiOperation({ summary: 'List all staff for current store (plus cross-branch owners/managers)' })
+  @ApiOperation({ summary: 'List staff — all branches for owner/manager/root, own branch for other roles' })
   list(@CurrentUser() user: JwtPayload, @Query(new ZodValidationPipe(PaginationSchema)) query: any) {
-    return this.staffService.list(user.storeId, query);
+    return this.staffService.list(staffScope(user), query);
   }
 
   @Get('approvers')
@@ -57,64 +65,77 @@ export class StaffController {
   @Get(':id')
   @Roles('manager', 'supervisor', 'owner')
   getById(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.staffService.getById(id, user.storeId);
+    return this.staffService.getById(id, staffScope(user));
   }
 
   @Get(':id/shifts')
   @Roles('manager', 'supervisor', 'owner')
   @ApiOperation({ summary: 'Shift history for a staff member' })
   getShiftHistory(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.staffService.getShiftHistory(id, 20, user.storeId);
+    return this.staffService.getShiftHistory(id, 20, staffScope(user));
   }
 
   @Post()
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Onboard new staff member' })
-  create(
+  async create(
     @Body(new ZodValidationPipe(CreateStaffSchema)) dto: CreateStaffDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    // Security: staff can only be created in the authenticated user's store
-    dto.storeId = user.storeId;
+    // Branch assignment: owner / manager / root may onboard staff into any
+    // active branch; every other role can only onboard into their own branch.
+    if (!isCrossBranchRole(user.role) || !dto.storeId) {
+      dto.storeId = user.storeId;
+    } else {
+      await this.staffService.assertActiveStore(dto.storeId);
+    }
     return this.staffService.create(dto);
   }
 
   @Put(':id')
   @Roles('manager', 'owner')
-  update(
+  async update(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(UpdateStaffSchema)) dto: UpdateStaffDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.staffService.update(id, dto, user.storeId);
+    // Only owner / manager / root may re-assign a staff member to another branch.
+    if (dto.storeId) {
+      if (isCrossBranchRole(user.role)) {
+        await this.staffService.assertActiveStore(dto.storeId);
+      } else {
+        delete dto.storeId;
+      }
+    }
+    return this.staffService.update(id, dto, staffScope(user));
   }
 
   @Patch(':id/deactivate')
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Deactivate staff account' })
   deactivate(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.staffService.deactivate(id, user.storeId);
+    return this.staffService.deactivate(id, staffScope(user));
   }
 
   @Delete(':id')
   @Roles('owner')
   @ApiOperation({ summary: 'Delete staff account' })
   delete(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.staffService.delete(id, user.sub, user.storeId);
+    return this.staffService.delete(id, user.sub, staffScope(user));
   }
 
   @Put(':id/temporary-pin')
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Generate a temporary PIN for a staff member' })
   generateTemporaryPin(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.staffService.generateTemporaryPin(id, user.storeId);
+    return this.staffService.generateTemporaryPin(id, staffScope(user));
   }
 
   @Post(':id/resend-credentials')
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Resend login credentials (new temp PIN) to staff email' })
   resendCredentials(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.staffService.resendCredentials(id, user.storeId);
+    return this.staffService.resendCredentials(id, staffScope(user));
   }
 
   @Get('audit/stats')
@@ -139,7 +160,7 @@ export class StaffController {
   @Roles('manager', 'owner')
   @ApiOperation({ summary: 'Get staff activity history (audit logs + shift events)' })
   getActivities(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.staffService.getActivities(id, user.storeId);
+    return this.staffService.getActivities(id, staffScope(user));
   }
 
   @Post('clock-in')
