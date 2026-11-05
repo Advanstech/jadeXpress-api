@@ -2272,7 +2272,7 @@ async function seed() {
       reorderQty: 10,
       initialQty: 18,
       batchNumber: "LOT-ADCVITC5-2026",
-      imageUrl: "/products/advanced-clinicals-vitamin-c-serum.png",
+      imageUrl: "/products/advanced-clinicals-vitamin-c-brightening-serum-52ml.png",
     },
     {
       sku: "AML-DH-20OZ",
