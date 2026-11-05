@@ -83,8 +83,8 @@ export class SuppliersController {
     @Body(new ZodValidationPipe(CreatePurchaseOrderSchema)) dto: CreatePurchaseOrderDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    // Security: force the PO to the authenticated user's effective store (or fallback to dto.storeId for cross-branch owner)
-    if (user.storeId) {
+    // Prefer explicit target branch from DTO if provided, falling back to authenticated user's effective store
+    if (!dto.storeId && user.storeId) {
       dto.storeId = user.storeId;
     }
     return this.suppliersService.createPurchaseOrder(dto, user.sub);
@@ -97,7 +97,11 @@ export class SuppliersController {
     @Body(new ZodValidationPipe(ReceiveGoodsSchema)) dto: ReceiveGoodsDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.suppliersService.receiveGoods(dto, user.sub, this.resolvePoStoreScope(user));
+    return this.suppliersService.receiveGoods(
+      dto,
+      user.sub,
+      (dto as any).storeId || this.resolvePoStoreScope(user),
+    );
   }
 
   @Post('purchase-orders/:id/pay')

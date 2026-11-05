@@ -2,6 +2,7 @@ import { Injectable, Inject, NotFoundException, ConflictException, BadRequestExc
 import { eq, and, or, desc, sql, ilike, inArray, isNull, sum, ne } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import {
+  stores,
   suppliers,
   purchaseOrders,
   purchaseItems,
@@ -123,9 +124,13 @@ export class SuppliersService {
       this.db.select({
         ...getTableColumns(purchaseOrders),
         approverName: sql<string>`concat(${staffProfile.firstName}, ' ', ${staffProfile.lastName})`,
+        storeName: stores.name,
+        storeCode: stores.code,
+        storeCity: stores.city,
       })
       .from(purchaseOrders)
       .leftJoin(staffProfile, eq(purchaseOrders.approvedById, staffProfile.id))
+      .leftJoin(stores, eq(purchaseOrders.storeId, stores.id))
       .where(where)
       .orderBy(desc(purchaseOrders.orderDate)).limit(limit).offset(offset),
       this.db.select({ count: sql<number>`count(*)` }).from(purchaseOrders).where(where),
@@ -542,9 +547,13 @@ export class SuppliersService {
       this.db.select({
         ...getTableColumns(purchaseOrders),
         approverName: sql<string>`concat(${staffProfile.firstName}, ' ', ${staffProfile.lastName})`,
+        storeName: stores.name,
+        storeCode: stores.code,
+        storeCity: stores.city,
       })
       .from(purchaseOrders)
       .leftJoin(staffProfile, eq(purchaseOrders.approvedById, staffProfile.id))
+      .leftJoin(stores, eq(purchaseOrders.storeId, stores.id))
       .where(where)
       .orderBy(desc(purchaseOrders.orderDate)).limit(limit).offset(offset),
       this.db.select({ count: sql<number>`count(*)` }).from(purchaseOrders).where(where),
@@ -559,9 +568,13 @@ export class SuppliersService {
       .select({
         ...getTableColumns(purchaseOrders),
         approverName: sql<string>`concat(${staffProfile.firstName}, ' ', ${staffProfile.lastName})`,
+        storeName: stores.name,
+        storeCode: stores.code,
+        storeCity: stores.city,
       })
       .from(purchaseOrders)
       .leftJoin(staffProfile, eq(purchaseOrders.approvedById, staffProfile.id))
+      .leftJoin(stores, eq(purchaseOrders.storeId, stores.id))
       .where(and(...conditions))
       .limit(1);
     if (!po) throw new NotFoundException('Purchase order not found');
