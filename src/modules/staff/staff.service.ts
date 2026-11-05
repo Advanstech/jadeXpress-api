@@ -75,7 +75,12 @@ export class StaffService {
   async list(storeId: string, query: PaginationDto) {
     const { page, limit } = query;
     const offset = (page - 1) * limit;
-    const where = eq(staffProfile.storeId, storeId);
+    const where = storeId
+      ? or(
+          eq(staffProfile.storeId, storeId),
+          sql`${staffProfile.role}::text IN ('owner', 'manager', 'super_admin', 'root')`,
+        )
+      : undefined;
 
     const [data, [{ count }]] = await Promise.all([
       this.db.select(safeSelect).from(staffProfile).where(where)
@@ -83,6 +88,25 @@ export class StaffService {
       this.db.select({ count: sql<number>`count(*)` }).from(staffProfile).where(where),
     ]);
     return paginate(data, Number(count), page, limit);
+  }
+
+  async getApprovers() {
+    return this.db
+      .select(rosterSelect)
+      .from(staffProfile)
+      .where(
+        sql`${staffProfile.role}::text IN ('owner', 'manager', 'head_pharmacist', 'supervisor', 'super_admin', 'root')`,
+      )
+      .orderBy(
+        sql`CASE
+          WHEN ${staffProfile.role}::text = 'owner' THEN 1
+          WHEN ${staffProfile.role}::text = 'manager' THEN 2
+          WHEN ${staffProfile.role}::text = 'head_pharmacist' THEN 3
+          WHEN ${staffProfile.role}::text = 'supervisor' THEN 4
+          ELSE 5
+        END`,
+        staffProfile.firstName,
+      );
   }
 
   async getRoster(storeId?: string) {

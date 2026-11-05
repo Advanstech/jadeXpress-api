@@ -21,10 +21,16 @@ export class StaffController {
   constructor(private readonly staffService: StaffService) {}
 
   @Get()
-  @Roles('manager', 'owner')
-  @ApiOperation({ summary: 'List all staff for current store' })
+  @Roles('manager', 'owner', 'supervisor', 'pharmacist', 'stock_officer')
+  @ApiOperation({ summary: 'List all staff for current store (plus cross-branch owners/managers)' })
   list(@CurrentUser() user: JwtPayload, @Query(new ZodValidationPipe(PaginationSchema)) query: any) {
     return this.staffService.list(user.storeId, query);
+  }
+
+  @Get('approvers')
+  @ApiOperation({ summary: 'List all owners and managers eligible to approve purchase orders and invoices' })
+  async getApprovers() {
+    return this.staffService.getApprovers();
   }
 
   @Get('roster')
