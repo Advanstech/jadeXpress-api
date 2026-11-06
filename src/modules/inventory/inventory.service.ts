@@ -16,6 +16,7 @@ import {
   stockAlerts,
   stores,
   staffProfile,
+  auditLogs,
 } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type {
@@ -374,7 +375,7 @@ export class InventoryService {
     }
   }
 
-  async createProduct(dto: CreateProductDto, storeId?: string) {
+  async createProduct(dto: CreateProductDto, storeId?: string, staffId?: string) {
     const normalizedDto = { ...dto, name: titleCase(dto.name) };
     const existing = await this.db
       .select({ id: products.id })
@@ -389,6 +390,9 @@ export class InventoryService {
     // Storefront sync — every product needs a public slug for /product/[slug] URLs
     const slug = normalizedDto.slug?.trim() || await this.generateUniqueSlug(normalizedDto.name);
     const [product] = await this.db.insert(products).values({ ...normalizedDto, slug }).returning();
+    if (product) {
+      await this.recordProductAudit('PRODUCT_CREATED', product.id, staffId, storeId, { name: product.name, sku: product.sku });
+    }
 
     // Auto-create a stock item row so the product appears in inventory immediately
     if (storeId && product) {
@@ -407,7 +411,7 @@ export class InventoryService {
     return product;
   }
 
-  async updateProduct(id: string, dto: UpdateProductDto) {
+  async updateProduct(id: string, dto: UpdateProductDto, staffId?: string, storeId?: string) {
     // Storefront sync — backfill a slug for legacy products when they get edited
     const setValues: UpdateProductDto = { ...dto };
     if (dto.name) {
@@ -431,14 +435,16 @@ export class InventoryService {
       .returning();
 
     if (!product) throw new NotFoundException('Product not found');
+    await this.recordProductAudit('PRODUCT_UPDATED', product.id, staffId, storeId, { name: product.name, sku: product.sku, changed: Object.keys(dto) });
     return product;
   }
 
-  async deleteProduct(id: string) {
-    const existing = await this.db.select({ id: products.id, name: products.name }).from(products).where(eq(products.id, id)).limit(1);
+  async deleteProduct(id: string, staffId?: string, storeId?: string) {
+    const existing = await this.db.select({ id: products.id, name: products.name, sku: products.sku }).from(products).where(eq(products.id, id)).limit(1);
     if (!existing.length) {
       throw new NotFoundException('Product not found');
     }
+    await this.recordProductAudit('PRODUCT_DELETED', id, staffId, storeId, { name: existing[0].name, sku: existing[0].sku });
 
     // Clean up dependent stock records first to satisfy foreign key constraints
     await this.db.delete(stockAlerts).where(eq(stockAlerts.productId, id));
@@ -581,6 +587,79 @@ export class InventoryService {
     await this.checkAndCreateAlerts(dto.productId, dto.storeId);
 
     return item;
+  }
+
+  // ── Product activity feed: all stock movements, searchable + paginated ────
+  async getActivities(
+    storeId: string,
+    opts: { search?: string; from?: string; to?: string; page?: number; limit?: number },
+  ) {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(100, Math.max(1, opts.limit ?? 25));
+    const conditions = [eq(stockMovements.storeId, storeId)];
+    if (opts.search) {
+      conditions.push(
+        or(ilike(products.name, `%${opts.search}%`), ilike(products.sku, `%${opts.search}%`))!,
+      );
+    }
+    if (opts.from) conditions.push(gte(stockMovements.createdAt, new Date(opts.from)));
+    if (opts.to) conditions.push(lte(stockMovements.createdAt, new Date(`${opts.to}T23:59:59.999Z`)));
+    const where = and(...conditions);
+
+    const [{ total }] = await this.db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(stockMovements)
+      .innerJoin(products, eq(stockMovements.productId, products.id))
+      .where(where);
+
+    const data = await this.db
+      .select({
+        id: stockMovements.id,
+        type: stockMovements.type,
+        quantityChange: stockMovements.quantityChange,
+        quantityBefore: stockMovements.quantityBefore,
+        quantityAfter: stockMovements.quantityAfter,
+        referenceType: stockMovements.referenceType,
+        referenceId: stockMovements.referenceId,
+        notes: stockMovements.notes,
+        createdAt: stockMovements.createdAt,
+        productId: products.id,
+        productName: products.name,
+        productSku: products.sku,
+        performedById: stockMovements.performedById,
+        staffName: sql<string | null>`nullif(trim(concat_ws(' ', ${staffProfile.firstName}, ${staffProfile.lastName})), '')`,
+      })
+      .from(stockMovements)
+      .innerJoin(products, eq(stockMovements.productId, products.id))
+      .leftJoin(staffProfile, eq(stockMovements.performedById, staffProfile.id))
+      .where(where)
+      .orderBy(desc(stockMovements.createdAt))
+      .limit(limit)
+      .offset((page - 1) * limit);
+
+    return { data, total, page, limit };
+  }
+
+  // ── Audit helper: product lifecycle events (never block ops) ──────────────
+  private async recordProductAudit(
+    action: string,
+    productId: string,
+    staffId: string | undefined,
+    storeId: string | undefined,
+    data: Record<string, unknown>,
+  ) {
+    try {
+      await this.db.insert(auditLogs).values({
+        staffId: staffId ?? null,
+        storeId: storeId ?? null,
+        action,
+        entityType: 'product',
+        entityId: productId,
+        newData: data,
+      });
+    } catch (err) {
+      console.warn(`Failed to record product audit ${action}`, err);
+    }
   }
 
   // ── Stock Movements (audit trail) ─────────────────────────────────────────

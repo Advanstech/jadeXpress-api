@@ -77,7 +77,7 @@ export class InventoryController {
     @CurrentUser() user: JwtPayload,
     @Body(new ZodValidationPipe(CreateProductSchema)) dto: CreateProductDto,
   ) {
-    return this.inventoryService.createProduct(dto, user.storeId);
+    return this.inventoryService.createProduct(dto, user.storeId, user.sub);
   }
 
   @Put('products/:id')
@@ -85,16 +85,17 @@ export class InventoryController {
   @ApiOperation({ summary: 'Update product' })
   updateProduct(
     @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
     @Body(new ZodValidationPipe(UpdateProductSchema)) dto: UpdateProductDto,
   ) {
-    return this.inventoryService.updateProduct(id, dto);
+    return this.inventoryService.updateProduct(id, dto, user.sub, user.storeId);
   }
 
   @Delete('products/:id')
   @Roles('manager', 'owner', 'stock_officer')
   @ApiOperation({ summary: 'Delete product' })
-  deleteProduct(@Param('id') id: string) {
-    return this.inventoryService.deleteProduct(id);
+  deleteProduct(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.inventoryService.deleteProduct(id, user.sub, user.storeId);
   }
 
   // ── Stock Items ────────────────────────────────────────────────────────────
@@ -179,6 +180,30 @@ export class InventoryController {
   @ApiOperation({ summary: 'Stock movement ledger for a product' })
   getMovements(@Param('productId') productId: string, @CurrentUser() user: JwtPayload) {
     return this.inventoryService.getMovements(productId, user.storeId);
+  }
+
+  @Get('activities')
+  @ApiOperation({ summary: 'All stock activity (movements incl. transfers/adjustments) with search, date filter, pagination' })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  getActivities(
+    @CurrentUser() user: JwtPayload,
+    @Query('search') search?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.inventoryService.getActivities(user.storeId, {
+      search,
+      from,
+      to,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
   }
 
   @Get('reports/daily')
