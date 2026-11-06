@@ -288,13 +288,21 @@ export class DashboardService {
       .slice(0, feedLimit);
   }
 
-  async getRevenueSparkline(storeId: string, days = 14) {
-    const from = new Date();
-    from.setHours(0, 0, 0, 0);
-    from.setDate(from.getDate() - days);
+  async getRevenueSparkline(storeId: string, days = 14, fromDate?: string, toDate?: string) {
+    const parseDay = (value: string | undefined, fallback: Date, endOfDay: boolean) => {
+      if (value) {
+        const parsed = new Date(value);
+        if (!isNaN(parsed.getTime())) {
+          parsed.setHours(endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
+          return parsed;
+        }
+      }
+      return fallback;
+    };
 
-    const to = new Date();
-    to.setHours(23, 59, 59, 999);
+    let from = parseDay(fromDate, (() => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - days); return d; })(), false);
+    let to = parseDay(toDate, (() => { const d = new Date(); d.setHours(23, 59, 59, 999); return d; })(), true);
+    if (from > to) [from, to] = [to, from];
 
     return this.db
       .select({

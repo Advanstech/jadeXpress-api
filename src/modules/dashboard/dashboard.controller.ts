@@ -24,8 +24,13 @@ export class DashboardController {
   }
 
   @Get('sparkline')
-  @ApiOperation({ summary: 'Revenue sparkline for last N days (default 14)' })
-  getSparkline(@CurrentUser() user: JwtPayload, @Query('days') days?: string) {
-    return this.dashboardService.getRevenueSparkline(user.storeId, days ? parseInt(days) : 14);
+  @ApiOperation({ summary: 'Revenue sparkline for last N days, or custom from/to range (default 14)' })
+  getSparkline(
+    @CurrentUser() user: JwtPayload,
+    @Query('days') days?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.dashboardService.getRevenueSparkline(user.storeId, days ? parseInt(days) : 14, from, to);
   }
 }
