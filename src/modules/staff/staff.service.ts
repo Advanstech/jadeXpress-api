@@ -6,12 +6,13 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
-import { eq, and, desc, sql, gte, lte, ilike, or } from 'drizzle-orm';
+import { eq, and, desc, sql, gte, lte, ilike, or, inArray } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { staffProfile, shiftReconciliation, stores } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
-import type { CreateStaffDto, UpdateStaffDto, ChangePinDto, ClockInDto, ClockOutDto } from './dto/staff.dto';
+import type { CreateStaffDto, UpdateStaffDto, ChangePinDto, ClockInDto, ClockOutDto, BranchSwitchDto } from './dto/staff.dto';
+import type { JwtPayload } from '../../common/decorators/current-user.decorator';
 
 import { EmailService } from '../email/email.service';
 
@@ -473,7 +474,10 @@ export class StaffService {
     const [data, [{ count }]] = await Promise.all([
       this.db.query.auditLogs.findMany({
         where,
-        with: { staff: true },
+        with: {
+          staff: true,
+          store: { columns: { id: true, name: true, code: true } },
+        },
         orderBy: [desc(auditLogs.createdAt)],
         limit,
         offset,
@@ -494,6 +498,41 @@ export class StaffService {
     });
 
     return paginate(sanitizedData, Number(count), page, limit);
+  }
+
+  /**
+   * Record a user's branch switch. The target store is `user.storeId` — already
+   * swapped to the X-Store-Id value by StoreScopeGuard + CurrentUser, so it is
+   * guaranteed to be a real, active branch this role may operate in. The log is
+   * written against the TARGET branch so it appears in that branch's audit feed.
+   */
+  async recordBranchSwitch(user: JwtPayload, dto: BranchSwitchDto) {
+    const { auditLogs } = await import('../../database/schema');
+    const ids = [user.storeId, dto.fromStoreId].filter((x): x is string => Boolean(x));
+    const rows = await this.db
+      .select({ id: stores.id, name: stores.name, code: stores.code })
+      .from(stores)
+      .where(inArray(stores.id, ids));
+    const label = (id?: string | null) => {
+      const s = rows.find((r) => r.id === id);
+      return s ? `${s.code} — ${s.name}` : null;
+    };
+
+    const [log] = await this.db.insert(auditLogs).values({
+      staffId: user.sub,
+      storeId: user.storeId,
+      action: 'BRANCH_SWITCH',
+      entityType: 'store',
+      entityId: user.storeId,
+      newData: {
+        fromStoreId: dto.fromStoreId ?? null,
+        fromStoreName: label(dto.fromStoreId),
+        toStoreId: user.storeId,
+        toStoreName: label(user.storeId),
+      },
+    }).returning();
+
+    return log;
   }
 
   async resendCredentials(id: string, storeId?: string) {

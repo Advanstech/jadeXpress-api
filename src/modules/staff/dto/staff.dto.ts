@@ -47,8 +47,15 @@ export const ClockOutSchema = z.object({
   shiftId: z.string().uuid(),
 });
 
+export const BranchSwitchSchema = z.object({
+  // The branch the user was viewing before switching — informational only.
+  // The target branch is taken from the validated X-Store-Id header.
+  fromStoreId: z.string().uuid().optional(),
+});
+
 export type CreateStaffDto = z.infer<typeof CreateStaffSchema>;
 export type UpdateStaffDto = z.infer<typeof UpdateStaffSchema>;
 export type ChangePinDto = z.infer<typeof ChangePinSchema>;
 export type ClockInDto = z.infer<typeof ClockInSchema>;
 export type ClockOutDto = z.infer<typeof ClockOutSchema>;
+export type BranchSwitchDto = z.infer<typeof BranchSwitchSchema>;

@@ -1,4 +1,4 @@
-import { Controller, Post, Put, Body, HttpCode, HttpStatus, Logger } from '@nestjs/common';
+import { Controller, Post, Put, Body, HttpCode, HttpStatus, Logger, Ip, Headers } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { z } from 'zod';
 import { AuthService } from './auth.service';
@@ -33,16 +33,24 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Email + password login (manager/owner portal)' })
-  login(@Body(new ZodValidationPipe(LoginSchema)) dto: LoginDto) {
-    return this.authService.login(dto);
+  login(
+    @Body(new ZodValidationPipe(LoginSchema)) dto: LoginDto,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    return this.authService.login(dto, { ip, userAgent });
   }
 
   @Public()
   @Post('pin-login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'PIN login — POS cashier touchscreen login' })
-  pinLogin(@Body(new ZodValidationPipe(PinLoginSchema)) dto: PinLoginDto) {
-    return this.authService.pinLogin(dto);
+  pinLogin(
+    @Body(new ZodValidationPipe(PinLoginSchema)) dto: PinLoginDto,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    return this.authService.pinLogin(dto, { ip, userAgent });
   }
 
   @Public()

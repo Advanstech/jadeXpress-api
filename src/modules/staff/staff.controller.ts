@@ -12,6 +12,7 @@ import {
   ChangePinSchema, ChangePinDto,
   ClockInSchema, ClockInDto,
   ClockOutSchema, ClockOutDto,
+  BranchSwitchSchema, BranchSwitchDto,
 } from './dto/staff.dto';
 import { isCrossBranchRole } from '../../common/utils/branch-scope';
 
@@ -154,6 +155,15 @@ export class StaffController {
   @ApiOperation({ summary: 'Get all staff audit logs for the store' })
   getAllAuditLogs(@CurrentUser() user: JwtPayload, @Query(new ZodValidationPipe(PaginationSchema)) query: any) {
     return this.staffService.getAllAuditLogs(user.storeId, query);
+  }
+
+  @Post('audit/branch-switch')
+  @ApiOperation({ summary: 'Record a branch switch — target store comes from X-Store-Id (validated by StoreScopeGuard)' })
+  recordBranchSwitch(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(BranchSwitchSchema)) dto: BranchSwitchDto,
+  ) {
+    return this.staffService.recordBranchSwitch(user, dto);
   }
 
   @Get(':id/activities')

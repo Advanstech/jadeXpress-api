@@ -29,7 +29,7 @@ export class AuthService {
   ) {}
 
   // ── Email + Password login (manager/owner web portal) ─────────────────────
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, meta?: { ip?: string; userAgent?: string }) {
     const where = dto.staffId
       ? eq(staffProfile.id, dto.staffId)
       : eq(staffProfile.email, dto.email!.toLowerCase());
@@ -47,11 +47,12 @@ export class AuthService {
     if (!valid) throw new UnauthorizedException('Invalid credentials');
     if (!staff.isActive) throw new UnauthorizedException('Account is deactivated');
 
+    await this.recordLogin(staff, 'password', meta);
     return this.issueTokens(staff);
   }
 
   // ── PIN login (POS cashier login — fastest path) ──────────────────────────
-  async pinLogin(dto: PinLoginDto) {
+  async pinLogin(dto: PinLoginDto, meta?: { ip?: string; userAgent?: string }) {
     let staff: typeof staffProfile.$inferSelect | undefined;
 
     if (dto.staffId && dto.storeId) {
@@ -113,6 +114,7 @@ export class AuthService {
     if ((staff.failedPinAttempts ?? 0) > 0 || staff.pinLockedUntil) {
       await this.resetPinLock(staff.id);
     }
+    await this.recordLogin(staff, 'pin', meta);
     return this.issueTokens(staff);
   }
 
@@ -413,6 +415,28 @@ export class AuthService {
       .update(staffProfile)
       .set({ failedPinAttempts: 0, pinLockedUntil: null, updatedAt: new Date() })
       .where(eq(staffProfile.id, staffId));
+  }
+
+  // ── Internal: audit the successful login — never block auth on failure ────
+  private async recordLogin(
+    staff: typeof staffProfile.$inferSelect,
+    method: 'password' | 'pin',
+    meta?: { ip?: string; userAgent?: string },
+  ) {
+    try {
+      await this.db.insert(auditLogs).values({
+        staffId: staff.id,
+        storeId: staff.storeId,
+        action: 'LOGIN',
+        entityType: 'staff',
+        entityId: staff.id,
+        newData: { method },
+        ipAddress: meta?.ip,
+        userAgent: meta?.userAgent,
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to record login audit for staff ${staff.id}`, err);
+    }
   }
 
   // ── Internal: sign access + refresh tokens ────────────────────────────────

@@ -245,6 +245,23 @@ export class EodService implements OnModuleInit, OnModuleDestroy {
       momoVariance,
     });
 
+    await this.db.insert(auditLogs).values({
+      staffId: closedById,
+      storeId: dto.storeId,
+      action: 'EOD_CLOSED',
+      entityType: 'eod_record',
+      entityId: updated.id,
+      newData: {
+        businessDate: dto.businessDate,
+        status: updated.status,
+        systemTotalPesewas: totals.systemTotal,
+        systemSaleCount: totals.systemSaleCount,
+        physicalCashCountPesewas: dto.physicalCashCount,
+        cashVariancePesewas: cashVariance,
+        momoVariancePesewas: momoVariance,
+      },
+    });
+
     return updated;
   }
 
