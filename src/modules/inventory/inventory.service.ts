@@ -121,7 +121,19 @@ export class InventoryService {
         product: products,
         category: categories,
         stockItem: stockItems,
-        supplierName: suppliers.name,
+        supplierName: sql<string | null>`coalesce(${suppliers.name}, (
+          select sup2.name from purchase_item pi2
+          join purchase po2 on po2.id = pi2.purchase_order_id
+          join supplier sup2 on sup2.id = po2.supplier_id
+          where pi2.product_id = ${products.id} and po2.store_id = ${storeId}::uuid
+          order by po2.created_at desc limit 1
+        ))`,
+        supplierId: sql<string | null>`coalesce(${products.primarySupplierId}, (
+          select po2.supplier_id from purchase_item pi2
+          join purchase po2 on po2.id = pi2.purchase_order_id
+          where pi2.product_id = ${products.id} and po2.store_id = ${storeId}::uuid
+          order by po2.created_at desc limit 1
+        ))`,
       })
       .from(products)
       .leftJoin(categories, eq(products.categoryId, categories.id))
@@ -165,6 +177,7 @@ export class InventoryService {
       categoryId: row.product.categoryId,
       categoryObj: row.category ?? null,
       supplierName: row.supplierName ?? null,
+      supplierId: row.supplierId ?? null,
       quantity: row.stockItem?.quantityOnHand ?? 0,
       stockLevel: row.stockItem?.quantityOnHand ?? 0,
     }));
