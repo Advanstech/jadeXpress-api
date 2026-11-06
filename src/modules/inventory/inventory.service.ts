@@ -18,6 +18,8 @@ import {
   staffProfile,
   auditLogs,
   suppliers,
+  purchaseItems,
+  purchaseOrders,
 } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type {
@@ -121,19 +123,8 @@ export class InventoryService {
         product: products,
         category: categories,
         stockItem: stockItems,
-        supplierName: sql<string | null>`coalesce(${suppliers.name}, (
-          select sup2.name from purchase_item pi2
-          join purchase po2 on po2.id = pi2.purchase_order_id
-          join supplier sup2 on sup2.id = po2.supplier_id
-          where pi2.product_id = ${products.id} and po2.store_id = ${storeId}::uuid
-          order by po2.created_at desc limit 1
-        ))`,
-        supplierId: sql<string | null>`coalesce(${products.primarySupplierId}, (
-          select po2.supplier_id from purchase_item pi2
-          join purchase po2 on po2.id = pi2.purchase_order_id
-          where pi2.product_id = ${products.id} and po2.store_id = ${storeId}::uuid
-          order by po2.created_at desc limit 1
-        ))`,
+        supplierName: suppliers.name,
+        supplierId: products.primarySupplierId,
       })
       .from(products)
       .leftJoin(categories, eq(products.categoryId, categories.id))
@@ -169,18 +160,51 @@ export class InventoryService {
 
     const count = Number(countResult[0]?.count ?? 0);
 
-    const mappedData = data.map(row => ({
+    // Fallback: products without a primary supplier resolve to the supplier on
+    // their most recent purchase order at this store (single batched query —
+    // purchase_item.product_id is unindexed, so per-row subqueries time out).
+    const missingSupplierProductIds = [...new Set(
+      data.filter((r) => !r.product.primarySupplierId).map((r) => r.product.id),
+    )];
+    const lastPurchaseSupplier = new Map<string, { supplierId: string; supplierName: string }>();
+    if (missingSupplierProductIds.length > 0) {
+      const poRows = await this.db
+        .select({
+          productId: purchaseItems.productId,
+          supplierId: purchaseOrders.supplierId,
+          supplierName: suppliers.name,
+          createdAt: purchaseOrders.createdAt,
+        })
+        .from(purchaseItems)
+        .innerJoin(purchaseOrders, eq(purchaseItems.purchaseOrderId, purchaseOrders.id))
+        .innerJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
+        .where(and(
+          inArray(purchaseItems.productId, missingSupplierProductIds),
+          eq(purchaseOrders.storeId, storeId),
+        ))
+        .orderBy(desc(purchaseOrders.createdAt));
+      for (const r of poRows) {
+        if (!lastPurchaseSupplier.has(r.productId)) {
+          lastPurchaseSupplier.set(r.productId, { supplierId: r.supplierId, supplierName: r.supplierName });
+        }
+      }
+    }
+
+    const mappedData = data.map(row => {
+      const fallback = lastPurchaseSupplier.get(row.product.id);
+      return {
       ...row.product,
       category: row.category?.name ?? null,
       categoryName: row.category?.name ?? null,
       categorySlug: row.category?.slug ?? null,
       categoryId: row.product.categoryId,
       categoryObj: row.category ?? null,
-      supplierName: row.supplierName ?? null,
-      supplierId: row.supplierId ?? null,
+      supplierName: row.supplierName ?? fallback?.supplierName ?? null,
+      supplierId: row.supplierId ?? fallback?.supplierId ?? null,
       quantity: row.stockItem?.quantityOnHand ?? 0,
       stockLevel: row.stockItem?.quantityOnHand ?? 0,
-    }));
+      };
+    });
 
     const uniqueData = Array.from(new Map(mappedData.map(item => [item.id, item])).values());
 
