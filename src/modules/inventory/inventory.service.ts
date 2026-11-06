@@ -17,6 +17,7 @@ import {
   stores,
   staffProfile,
   auditLogs,
+  suppliers,
 } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type {
@@ -120,9 +121,11 @@ export class InventoryService {
         product: products,
         category: categories,
         stockItem: stockItems,
+        supplierName: suppliers.name,
       })
       .from(products)
       .leftJoin(categories, eq(products.categoryId, categories.id))
+      .leftJoin(suppliers, eq(products.primarySupplierId, suppliers.id))
       .leftJoin(stockItems, and(
         eq(stockItems.productId, products.id),
         eq(stockItems.storeId, storeId),
@@ -161,6 +164,7 @@ export class InventoryService {
       categorySlug: row.category?.slug ?? null,
       categoryId: row.product.categoryId,
       categoryObj: row.category ?? null,
+      supplierName: row.supplierName ?? null,
       quantity: row.stockItem?.quantityOnHand ?? 0,
       stockLevel: row.stockItem?.quantityOnHand ?? 0,
     }));
