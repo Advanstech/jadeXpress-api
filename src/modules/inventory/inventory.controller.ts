@@ -181,6 +181,18 @@ export class InventoryController {
     return this.inventoryService.getMovements(productId, user.storeId);
   }
 
+  @Get('reports/daily')
+  @ApiOperation({ summary: 'Daily stock report per product (opening, in/out, sold, closing)' })
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
+  getDailyReport(
+    @CurrentUser() user: JwtPayload,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.inventoryService.getDailyStockReport(user.storeId, from, to);
+  }
+
   // ── Alerts ─────────────────────────────────────────────────────────────────
   @Get('alerts')
   @ApiOperation({ summary: 'Active stock alerts (low stock, expiry)' })

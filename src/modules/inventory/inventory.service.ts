@@ -15,6 +15,7 @@ import {
   stockMovements,
   stockAlerts,
   stores,
+  staffProfile,
 } from '../../database/schema';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import type {
@@ -585,11 +586,100 @@ export class InventoryService {
   // ── Stock Movements (audit trail) ─────────────────────────────────────────
   async getMovements(productId: string, storeId: string, limit = 50) {
     return this.db
-      .select()
+      .select({
+        id: stockMovements.id,
+        type: stockMovements.type,
+        quantityChange: stockMovements.quantityChange,
+        quantityBefore: stockMovements.quantityBefore,
+        quantityAfter: stockMovements.quantityAfter,
+        referenceType: stockMovements.referenceType,
+        referenceId: stockMovements.referenceId,
+        notes: stockMovements.notes,
+        performedById: stockMovements.performedById,
+        staffName: sql<string | null>`nullif(trim(concat_ws(' ', ${staffProfile.firstName}, ${staffProfile.lastName})), '')`,
+        createdAt: stockMovements.createdAt,
+      })
       .from(stockMovements)
+      .leftJoin(staffProfile, eq(stockMovements.performedById, staffProfile.id))
       .where(and(eq(stockMovements.productId, productId), eq(stockMovements.storeId, storeId)))
       .orderBy(desc(stockMovements.createdAt))
       .limit(limit);
+  }
+
+  // ── Daily stock report: per-product opening / in / out / sold / closing ────
+  async getDailyStockReport(storeId: string, from?: string, to?: string) {
+    const toDate = to ?? new Date().toISOString().slice(0, 10);
+    const fromDate =
+      from ??
+      new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+
+    const result: any = await this.db.execute(sql`
+      with mv as (
+        select product_id,
+          created_at::date as d,
+          sum(case when quantity_change > 0 then quantity_change else 0 end)::int as qty_in,
+          sum(case when quantity_change < 0 then -quantity_change else 0 end)::int as qty_out,
+          sum(quantity_change)::int as net,
+          count(*)::int as moves
+        from stock_movement
+        where store_id = ${storeId}::uuid
+          and created_at >= ${fromDate}::date
+          and created_at < (${toDate}::date + interval '1 day')
+        group by product_id, created_at::date
+      ),
+      sold as (
+        select si.product_id, s.created_at::date as d, sum(si.quantity)::int as units
+        from sale_item si
+        join sale s on s.id = si.sale_id
+        where s.store_id = ${storeId}::uuid and s.status = 'completed'
+          and s.created_at >= ${fromDate}::date
+          and s.created_at < (${toDate}::date + interval '1 day')
+        group by si.product_id, s.created_at::date
+      ),
+      opening as (
+        select distinct on (m.product_id) m.product_id, m.quantity_after as qty
+        from stock_movement m
+        where m.store_id = ${storeId}::uuid and m.created_at < ${fromDate}::date
+        order by m.product_id, m.created_at desc
+      ),
+      firstmv as (
+        select distinct on (product_id) product_id, quantity_before as qty
+        from stock_movement
+        where store_id = ${storeId}::uuid
+        order by product_id, created_at asc
+      ),
+      activity as (
+        select coalesce(mv.product_id, sold.product_id) as product_id,
+          coalesce(mv.d, sold.d) as d,
+          coalesce(mv.qty_in, 0)::int as qty_in,
+          coalesce(mv.qty_out, 0)::int as qty_out,
+          coalesce(mv.net, 0)::int as net,
+          coalesce(sold.units, 0)::int as units_sold
+        from mv
+        full outer join sold
+          on sold.product_id = mv.product_id and sold.d = mv.d
+      ),
+      enriched as (
+        select a.d, a.product_id, a.qty_in, a.qty_out, a.net, a.units_sold,
+          coalesce(o.qty, f.qty, st.quantity_on_hand, 0)::int as opening
+        from activity a
+        join product p on p.id = a.product_id
+        left join opening o on o.product_id = a.product_id
+        left join firstmv f on f.product_id = a.product_id and o.product_id is null
+        left join stock_item st on st.product_id = a.product_id and st.store_id = ${storeId}::uuid
+      ),
+      running as (
+        select d, product_id, qty_in, qty_out, net, units_sold, opening,
+          opening + sum(net) over (partition by product_id order by d)::int as closing
+        from enriched
+      )
+      select r.d::text as date, p.sku, p.name, r.product_id,
+        r.opening, r.qty_in, r.qty_out, r.units_sold, r.net, r.closing
+      from running r
+      join product p on p.id = r.product_id
+      order by r.d, p.name
+    `);
+    return Array.isArray(result) ? result : result.rows;
   }
 
   // ── Alerts ────────────────────────────────────────────────────────────────
