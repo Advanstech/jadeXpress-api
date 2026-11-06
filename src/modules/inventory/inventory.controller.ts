@@ -178,8 +178,20 @@ export class InventoryController {
 
   @Get('movements/:productId')
   @ApiOperation({ summary: 'Stock movement ledger for a product' })
-  getMovements(@Param('productId') productId: string, @CurrentUser() user: JwtPayload) {
-    return this.inventoryService.getMovements(productId, user.storeId);
+  getMovements(
+    @Param('productId') productId: string,
+    @CurrentUser() user: JwtPayload,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.inventoryService.getMovements(productId, user.storeId, {
+      from,
+      to,
+      page: page ? parseInt(page) : undefined,
+      limit: limit ? parseInt(limit) : undefined,
+    });
   }
 
   @Get('activities')

@@ -704,26 +704,60 @@ export class InventoryService {
   }
 
   // ── Stock Movements (audit trail) ─────────────────────────────────────────
-  async getMovements(productId: string, storeId: string, limit = 50) {
-    return this.db
-      .select({
-        id: stockMovements.id,
-        type: stockMovements.type,
-        quantityChange: stockMovements.quantityChange,
-        quantityBefore: stockMovements.quantityBefore,
-        quantityAfter: stockMovements.quantityAfter,
-        referenceType: stockMovements.referenceType,
-        referenceId: stockMovements.referenceId,
-        notes: stockMovements.notes,
-        performedById: stockMovements.performedById,
-        staffName: sql<string | null>`nullif(trim(concat_ws(' ', ${staffProfile.firstName}, ${staffProfile.lastName})), '')`,
-        createdAt: stockMovements.createdAt,
-      })
-      .from(stockMovements)
-      .leftJoin(staffProfile, eq(stockMovements.performedById, staffProfile.id))
-      .where(and(eq(stockMovements.productId, productId), eq(stockMovements.storeId, storeId)))
-      .orderBy(desc(stockMovements.createdAt))
-      .limit(limit);
+  async getMovements(
+    productId: string,
+    storeId: string,
+    opts: { from?: string; to?: string; page?: number; limit?: number } = {},
+  ) {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(Math.max(1, opts.limit ?? 20), 100);
+
+    const conditions: any[] = [
+      eq(stockMovements.productId, productId),
+      eq(stockMovements.storeId, storeId),
+    ];
+    if (opts.from) {
+      const d = new Date(opts.from);
+      if (!isNaN(d.getTime())) { d.setHours(0, 0, 0, 0); conditions.push(gte(stockMovements.createdAt, d)); }
+    }
+    if (opts.to) {
+      const d = new Date(opts.to);
+      if (!isNaN(d.getTime())) { d.setHours(23, 59, 59, 999); conditions.push(lte(stockMovements.createdAt, d)); }
+    }
+
+    const [rows, countResult] = await Promise.all([
+      this.db
+        .select({
+          id: stockMovements.id,
+          type: stockMovements.type,
+          quantityChange: stockMovements.quantityChange,
+          quantityBefore: stockMovements.quantityBefore,
+          quantityAfter: stockMovements.quantityAfter,
+          referenceType: stockMovements.referenceType,
+          referenceId: stockMovements.referenceId,
+          notes: stockMovements.notes,
+          performedById: stockMovements.performedById,
+          staffName: sql<string | null>`nullif(trim(concat_ws(' ', ${staffProfile.firstName}, ${staffProfile.lastName})), '')`,
+          createdAt: stockMovements.createdAt,
+        })
+        .from(stockMovements)
+        .leftJoin(staffProfile, eq(stockMovements.performedById, staffProfile.id))
+        .where(and(...conditions))
+        .orderBy(desc(stockMovements.createdAt))
+        .limit(limit)
+        .offset((page - 1) * limit),
+      this.db
+        .select({ count: sql<number>`count(*)` })
+        .from(stockMovements)
+        .where(and(...conditions)),
+    ]);
+
+    return {
+      data: rows,
+      total: Number(countResult[0]?.count ?? 0),
+      page,
+      limit,
+    };
   }
 
   // ── Daily stock report: per-product opening / in / out / sold / closing ────
