@@ -58,6 +58,12 @@ export class InventoryController {
     return this.inventoryService.getProducts(user.storeId, query);
   }
 
+  @Post('products/search')
+  @ApiOperation({ summary: 'Search products for invoice selection in the effective branch' })
+  searchInvoiceProducts(@Body('query') query: string, @CurrentUser() user: JwtPayload) {
+    return this.inventoryService.searchInvoiceProducts(user.storeId, typeof query === 'string' ? query : '');
+  }
+
   @Get('products/barcode/:barcode')
   @ApiOperation({ summary: 'Barcode lookup — used by scanner at POS' })
   getByBarcode(@Param('barcode') barcode: string) {

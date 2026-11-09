@@ -96,6 +96,22 @@ export class InventoryService {
   }
 
   // ── Products ──────────────────────────────────────────────────────────────
+  async searchInvoiceProducts(storeId: string, query: string) {
+    const term = query.trim();
+    if (!term) return [];
+    return this.db.select({
+      id: products.id,
+      name: products.name,
+      sku: products.sku,
+      sellingPricePesewas: products.sellingPricePesewas,
+      stockOnHand: stockItems.quantityOnHand,
+    }).from(products)
+      .innerJoin(stockItems, and(eq(stockItems.productId, products.id), eq(stockItems.storeId, storeId)))
+      .where(and(eq(products.status, 'active'), or(ilike(products.name, `%${term}%`), ilike(products.sku, `%${term}%`))))
+      .orderBy(asc(products.name))
+      .limit(30);
+  }
+
   async getProducts(storeId: string, query: PaginationDto & { type?: string; categoryId?: string; lowStock?: boolean }) {
     const { page, limit, search, sortBy, sortOrder, type, categoryId, lowStock } = query;
     const offset = (page - 1) * limit;
