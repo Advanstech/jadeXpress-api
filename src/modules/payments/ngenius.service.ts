@@ -78,13 +78,17 @@ export class NgeniusService {
         'X-NI-Track-Id': trackId,
       },
       body: JSON.stringify({
-        action: 'PURCHASE',
+        // Stanbic collection uses SALE = authorize + capture in one step —
+        // appropriate for invoices paid in full at time of payment.
+        action: 'SALE',
         amount: {
           currencyCode: dto.currency ?? 'GHS',
           value: dto.amount, // minor units (pesewas)
         },
         merchantAttributes: {
           redirectUrl: dto.redirectUrl ?? redirectUrl,
+          cancelUrl: dto.redirectUrl ?? redirectUrl,
+          showPayerName: true,
         },
         ...(dto.email ? { emailAddress: dto.email } : {}),
       }),
@@ -98,11 +102,15 @@ export class NgeniusService {
 
     const paymentLink =
       json?._links?.payment?.href ?? json?._links?.['cnp:payment-link']?.href;
-    const orderRef = json?._links?.self?.href ?? json?.reference;
+    const selfLink: string | undefined = json?._links?.self?.href;
     if (!paymentLink) {
       this.logger.error(`N-Genius response missing payment link: ${JSON.stringify(json)}`);
       throw new BadRequestException('N-Genius did not return a payment page link');
     }
+
+    // The UUID inside the self-link is what Stanbic's reporting endpoint needs:
+    // .../orders/{orderRef} — extract it, fall back to the raw reference.
+    const orderRef = selfLink?.split('/').pop() ?? json?.reference ?? dto.reference;
 
     return {
       reference: json?.reference ?? dto.reference,
@@ -114,16 +122,20 @@ export class NgeniusService {
 
   /** Fetch the latest state of an N-Genius order (for callback/reconciliation). */
   async getOrderStatus(orderReference: string) {
-    if (!orderReference?.startsWith('http')) {
-      throw new BadRequestException('orderReference must be the order self-link URL');
+    const { outletRef, baseUrl } = this.cfg;
+    if (!outletRef || !orderReference) {
+      throw new BadRequestException('Missing outlet or order reference');
     }
     const token = await this.getAccessToken();
-    const res = await fetch(orderReference, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.ni-payment.v2+json',
+    const res = await fetch(
+      `${baseUrl}/reporting/outlets/${outletRef}/orders/${orderReference}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.ni-payment.v2+json',
+        },
       },
-    });
+    );
     const json = await res.json().catch(() => null);
     if (!res.ok) {
       this.logger.error(`N-Genius order status failed: ${res.status} ${JSON.stringify(json)}`);
@@ -131,12 +143,13 @@ export class NgeniusService {
     }
     const payment = json?._embedded?.payment?.[0];
     return {
-      reference: json?.reference,
+      reference: json?.reference ?? orderReference,
       orderReference,
       state: payment?.state ?? 'UNKNOWN', // STARTED | AUTHORIZED | PURCHASED | CAPTURED | DECLINED | CANCELLED | FAILED
       amount: payment?.amount?.value,
       currency: payment?.amount?.currencyCode,
-      transactionId: payment?._links?.self?.href ?? null,
+      paymentMethod: payment?.paymentMethod,
+      cardScheme: payment?.paymentCards?.cardScheme,
     };
   }
 
