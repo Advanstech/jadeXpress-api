@@ -9,7 +9,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { eq, and, isNull, lt } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
-import { createHash, randomUUID, randomInt } from 'crypto';
+import { randomInt, createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { DRIZZLE, DrizzleDB } from '../../database/database.module';
 import { staffProfile, refreshTokens, otpTokens, auditLogs } from '../../database/schema';
@@ -146,6 +146,32 @@ export class AuthService {
   }
 
   // ── Refresh token ─────────────────────────────────────────────────────────
+  private async rotateRefreshToken(stored: typeof refreshTokens.$inferSelect) {
+    const token = uuidv4();
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const expiresIn = this.config.getOrThrow<string>('jwt.refreshExpiresIn');
+    const days = parseInt(expiresIn.replace(/\D/g, ''), 10) || 7;
+    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    const replaced = await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .update(refreshTokens)
+        .set({ tokenHash, revokedAt: new Date(), expiresAt })
+        .where(and(eq(refreshTokens.id, stored.id), isNull(refreshTokens.revokedAt)))
+        .returning({ id: refreshTokens.id });
+      if (!rows.length) return [];
+      await tx
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(and(
+          eq(refreshTokens.staffId, stored.staffId),
+          isNull(refreshTokens.revokedAt),
+        ));
+      return rows;
+    });
+    if (!replaced.length) throw new UnauthorizedException('Invalid or expired refresh token');
+    return { token, tokenHash, expiresAt };
+  }
+
   async refresh(token: string) {
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const [stored] = await this.db
@@ -156,7 +182,8 @@ export class AuthService {
 
     if (!stored) throw new UnauthorizedException('Invalid or expired refresh token');
 
-    // Reuse of an already-rotated token — likely theft; revoke ALL sessions
+    // Keep expired rows until rotation so concurrent requests cannot turn a
+    // valid session into a false reuse-detection failure after expiration.
     if (stored.revokedAt) {
       await this.db
         .update(refreshTokens)
@@ -173,9 +200,8 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    if (stored.expiresAt < new Date()) {
-      throw new UnauthorizedException('Invalid or expired refresh token');
-    }
+    // A failed database write must not destroy the still-valid session.
+    const replacement = await this.rotateRefreshToken(stored);
 
     // Occasional cleanup — purge expired tokens ~10% of the time instead of
     // paying for a full-table DELETE on every refresh.
@@ -185,23 +211,19 @@ export class AuthService {
         .where(lt(refreshTokens.expiresAt, new Date()));
     }
 
-    // Staff lookup and token revocation are independent — run them in
-    // parallel to save a Neon round-trip.
-    const [[staff]] = await Promise.all([
-      this.db
-        .select()
-        .from(staffProfile)
-        .where(eq(staffProfile.id, stored.staffId))
-        .limit(1),
-      this.db
-        .update(refreshTokens)
-        .set({ revokedAt: new Date() })
-        .where(eq(refreshTokens.id, stored.id)),
-    ]);
+    // Never issue an access token until the replacement has been persisted.
+    const [staff] = await this.db
+      .select()
+      .from(staffProfile)
+      .where(eq(staffProfile.id, stored.staffId))
+      .limit(1);
 
-    if (!staff || !staff.isActive) throw new UnauthorizedException('Account deactivated');
+    if (!staff?.isActive) throw new UnauthorizedException('Account deactivated');
 
-    return this.issueTokens(staff);
+    return this.issueTokens(staff, {
+      token: replacement.token,
+      expiresAt: replacement.expiresAt,
+    });
   }
 
   // ── Revoke refresh token (logout) ─────────────────────────────────────────
@@ -440,7 +462,7 @@ export class AuthService {
   }
 
   // ── Internal: sign access + refresh tokens ────────────────────────────────
-  private async issueTokens(staff: typeof staffProfile.$inferSelect) {
+  private async issueTokens(staff: typeof staffProfile.$inferSelect, existingToken?: { token: string; expiresAt: Date }) {
     const payload: JwtPayload = {
       sub: staff.id,
       role: staff.role,
@@ -449,20 +471,26 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload);
 
-    const rawRefreshToken = randomUUID();
-    const tokenHash = createHash('sha256').update(rawRefreshToken).digest('hex');
+    let rawRefreshToken: string;
+    let expiresAt: Date;
+    if (existingToken) {
+      rawRefreshToken = existingToken.token;
+      expiresAt = existingToken.expiresAt;
+    } else {
+      rawRefreshToken = uuidv4();
+      const tokenHash = createHash('sha256').update(rawRefreshToken).digest('hex');
 
-    // Parse refreshExpiresIn (e.g. "7d", "30d") into a Date
-    const refreshExpiresIn = this.config.getOrThrow<string>('jwt.refreshExpiresIn');
-    const days = parseInt(refreshExpiresIn.replace(/\D/g, ''), 10) || 7;
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + days);
+      // Parse refreshExpiresIn (e.g. "7d", "30d") into a Date
+      const refreshExpiresIn = this.config.getOrThrow<string>('jwt.refreshExpiresIn');
+      const days = parseInt(refreshExpiresIn.replace(/\D/g, ''), 10) || 7;
+      expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
-    await this.db.insert(refreshTokens).values({
-      staffId: staff.id,
-      tokenHash,
-      expiresAt,
-    });
+      await this.db.insert(refreshTokens).values({
+        staffId: staff.id,
+        tokenHash,
+        expiresAt,
+      });
+    }
 
     return {
       accessToken,
