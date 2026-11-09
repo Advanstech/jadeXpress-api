@@ -88,7 +88,7 @@ export class NgeniusService {
         merchantAttributes: {
           redirectUrl: dto.redirectUrl ?? redirectUrl,
           cancelUrl: dto.redirectUrl ?? redirectUrl,
-          showPayerName: true,
+          // NOTE: showPayerName requires a billingAddress block — omit it.
         },
         ...(dto.email ? { emailAddress: dto.email } : {}),
       }),
@@ -127,12 +127,13 @@ export class NgeniusService {
       throw new BadRequestException('Missing outlet or order reference');
     }
     const token = await this.getAccessToken();
+    // NOTE: the reporting endpoint rejects the ni-payment Accept header (406)
+    // and returns a different shape — top-level `status` + `paymentCards[]`.
     const res = await fetch(
       `${baseUrl}/reporting/outlets/${outletRef}/orders/${orderReference}`,
       {
         headers: {
           Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.ni-payment.v2+json',
         },
       },
     );
@@ -141,15 +142,19 @@ export class NgeniusService {
       this.logger.error(`N-Genius order status failed: ${res.status} ${JSON.stringify(json)}`);
       throw new BadRequestException('Could not retrieve N-Genius order status');
     }
-    const payment = json?._embedded?.payment?.[0];
+    const card = json?.paymentCards?.[0];
     return {
       reference: json?.reference ?? orderReference,
       orderReference,
-      state: payment?.state ?? 'UNKNOWN', // STARTED | AUTHORIZED | PURCHASED | CAPTURED | DECLINED | CANCELLED | FAILED
-      amount: payment?.amount?.value,
-      currency: payment?.amount?.currencyCode,
-      paymentMethod: payment?.paymentMethod,
-      cardScheme: payment?.paymentCards?.cardScheme,
+      // Order lifecycle: OPEN → COMPLETED (paid) | CANCELLED.
+      // paymentCards[].state carries AUTHORIZED/PURCHASED/DECLINED/FAILED.
+      state: card?.state ?? json?.status ?? 'UNKNOWN',
+      orderState: json?.status,
+      amount: card?.amount?.value ?? json?.amount?.value,
+      currency: card?.amount?.currencyCode ?? json?.amount?.currencyCode,
+      paymentMethod: card?.paymentMethod,
+      cardScheme: card?.cardScheme,
+      maskedPan: card?.maskedPanNumber ?? card?.maskedCardNumber,
     };
   }
 
