@@ -10,6 +10,7 @@ import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { ContactController } from './contact.controller';
 import { ContactService } from './contact.service';
+import { BranchesController } from './branches.controller';
 
 @Module({
   imports: [AuthModule, EmailModule, PaymentsModule],
@@ -18,6 +19,7 @@ import { ContactService } from './contact.service';
     AddressesController,
     OrdersController,
     ContactController,
+    BranchesController,
   ],
   providers: [
     StorefrontAuthService,

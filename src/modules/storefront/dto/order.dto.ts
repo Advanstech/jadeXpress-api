@@ -18,6 +18,8 @@ const ShippingAddressSchema = z.object({
     })
     .optional()
     .nullable(),
+  // Fulfilment branch the customer chose at checkout (e.g. "Dzorwulu", "Israel Park")
+  deliveryBranch: z.string().max(100).optional().nullable(),
 });
 
 const OrderItemSchema = z.object({
