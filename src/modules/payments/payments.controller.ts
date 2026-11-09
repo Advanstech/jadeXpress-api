@@ -1,15 +1,19 @@
-import { Body, Controller, Get, Headers, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post, Query, Req } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Public } from '../../common/decorators/public.decorator';
+import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { InitializePaystackDto } from './dto/initialize-paystack.dto';
 import { RequestMomoDto } from './dto/request-momo.dto';
 import { InitializeStanbicDto } from './dto/initialize-stanbic.dto';
+import { InitializeNgeniusDto, InitializeNgeniusSchema } from './dto/initialize-ngenius.dto';
 import { PaymentsService } from './payments.service';
+import { NgeniusService } from './ngenius.service';
 
 @Controller('payments')
 export class PaymentsController {
   constructor(
     private readonly paymentsService: PaymentsService,
+    private readonly ngeniusService: NgeniusService,
     private readonly config: ConfigService,
   ) {}
 
@@ -66,5 +70,26 @@ export class PaymentsController {
       }
     }
     return { status: 'received', reference: payload?.reference };
+  }
+
+  // ── N-Genius (Network International) Hosted Payment Page ─────────────────
+  @Public()
+  @Post('ngenius/initialize')
+  async initializeNgenius(
+    @Body(new ZodValidationPipe(InitializeNgeniusSchema)) dto: InitializeNgeniusDto,
+  ) {
+    return this.ngeniusService.initializePayment(dto);
+  }
+
+  @Public()
+  @Get('ngenius/status')
+  async ngeniusStatus(@Query('order') order: string) {
+    return this.ngeniusService.getOrderStatus(order);
+  }
+
+  @Public()
+  @Post('ngenius/webhook')
+  async ngeniusWebhook(@Body() payload: any) {
+    return this.ngeniusService.handleWebhook(payload);
   }
 }

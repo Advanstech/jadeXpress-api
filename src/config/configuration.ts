@@ -61,5 +61,16 @@ export default () => ({
       callbackUrl: process.env.STANBIC_CALLBACK_URL,
       webhookSecret: process.env.STANBIC_WEBHOOK_SECRET,
     },
+    // Network International N-Genius Hosted Payment Page (Stanbic Bank Ghana)
+    ngenius: {
+      apiKey: process.env.NGENIUS_API_KEY,
+      outletReference:
+        process.env.NGENIUS_OUTLET_REFERENCE ?? 'e0ca9e39-8a45-4f6d-9bcb-7b86e599da5c',
+      baseUrl:
+        process.env.NGENIUS_BASE_URL ?? 'https://api-gateway.sandbox.stanbicbank.com.gh',
+      realmName: process.env.NGENIUS_REALM ?? 'StanbicBankGhana',
+      redirectUrl: process.env.NGENIUS_REDIRECT_URL,
+      trackId: process.env.NGENIUS_TRACK_ID ?? 'jadexpress-pos',
+    },
   },
 });
