@@ -33,7 +33,7 @@ export const CreateOrderSchema = z.object({
   items: z.array(OrderItemSchema).min(1),
   shippingFeePesewas: z.number().int().nonnegative().default(0),
   shippingAddress: ShippingAddressSchema,
-  paymentGateway: z.enum(['paystack', 'momo']).optional(),
+  paymentGateway: z.enum(['paystack', 'momo', 'stanbic', 'ngenius']).optional(),
   paymentReference: z.string().optional(),
   notes: z.string().optional(),
 });

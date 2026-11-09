@@ -39,6 +39,8 @@ export default () => ({
     // Physical store that fulfils online orders — its stockItems pool is what
     // the storefront sells from. Unset = first active store.
     storeId: process.env.STOREFRONT_STORE_ID,
+    // Public base URL of the ecommerce frontend — used for payment redirect/cancel URLs.
+    appUrl: process.env.STOREFRONT_APP_URL ?? 'http://localhost:3000',
   },
   payments: {
     paystackSecretKey: process.env.PAYSTACK_SECRET_KEY,

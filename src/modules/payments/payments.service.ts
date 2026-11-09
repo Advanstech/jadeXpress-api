@@ -260,14 +260,15 @@ export class PaymentsService {
     const apiKey = this.config.get<string>('payments.stanbic.apiKey');
     const baseUrl = this.config.get<string>('payments.stanbic.baseUrl') ?? 'https://api.advansistechnologies.com/v1';
 
-    // Sandbox fallback
+    // Sandbox fallback — MUST NOT report success: this endpoint is public and
+    // markPaid trusts a 'success' status to confirm orders as paid.
     if (!merchantId || !apiKey) {
       return {
-        status: 'success',
+        status: 'pending',
         reference,
         amount: 0,
         currency: 'GHS',
-        paidAt: new Date().toISOString(),
+        paidAt: null,
         channel: 'momo',
       };
     }

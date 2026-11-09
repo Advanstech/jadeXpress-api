@@ -16,6 +16,7 @@ import {
 import type { CreateOrderDto, UpdateOrderStatusDto } from './dto/order.dto';
 import { EmailService } from '../email/email.service';
 import { PaymentsService } from '../payments/payments.service';
+import { NgeniusService } from '../payments/ngenius.service';
 
 @Injectable()
 export class OrdersService {
@@ -23,6 +24,7 @@ export class OrdersService {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly email: EmailService,
     private readonly payments: PaymentsService,
+    private readonly ngenius: NgeniusService,
     private readonly config: ConfigService,
   ) {}
 
@@ -235,9 +237,16 @@ export class OrdersService {
     // Idempotent — replaying a successful webhook/callback is a no-op
     if (order.paymentStatus === 'paid') return order;
 
-    // SECURITY: only verified gateways (Paystack, Stanbic, Advansis) can be auto-confirmed,
-    // and only after the gateway itself verifies the reference.
-    if (!reference || (gateway !== 'paystack' && gateway !== 'stanbic' && gateway !== 'advansis')) {
+    // SECURITY: only verified gateways can be auto-confirmed, and only after
+    // the gateway itself confirms the reference. 'ngenius' verifies the order
+    // state via the reporting API; anything else requires manual confirmation.
+    if (
+      !reference ||
+      (gateway !== 'paystack' &&
+        gateway !== 'stanbic' &&
+        gateway !== 'advansis' &&
+        gateway !== 'ngenius')
+    ) {
       throw new BadRequestException(
         'This payment method requires manual confirmation by our team',
       );
@@ -249,6 +258,18 @@ export class OrdersService {
         throw new BadRequestException('Payment has not been completed');
       }
       if (verification.amount < order.totalPesewas) {
+        throw new BadRequestException('Payment amount does not match the order total');
+      }
+    } else if (gateway === 'ngenius') {
+      // reference = N-Genius order UUID (from /payments/ngenius/initialize)
+      const status = await this.ngenius.getOrderStatus(reference);
+      const paid = ['PURCHASED', 'CAPTURED', 'COMPLETED', 'AUTHORIZED'];
+      if (!paid.includes(status.state)) {
+        throw new BadRequestException(
+          `N-Genius payment not completed (state: ${status.state})`,
+        );
+      }
+      if (status.amount != null && status.amount < order.totalPesewas) {
         throw new BadRequestException('Payment amount does not match the order total');
       }
     } else if (gateway === 'stanbic' || gateway === 'advansis') {
@@ -311,6 +332,44 @@ export class OrdersService {
     });
 
     return updated ?? this.getOrderById(orderId);
+  }
+
+  /**
+   * Create an N-Genius hosted-payment link for an existing unpaid order.
+   * Stores the N-Genius order UUID in paymentReference so the return page
+   * can confirm via PUT /:id/pay without trusting client input.
+   */
+  async createNgeniusPaymentLink(orderId: string) {
+    const order = await this.getOrderById(orderId);
+    if (order.paymentStatus === 'paid') {
+      throw new BadRequestException('Order is already paid');
+    }
+    if (order.status === 'cancelled') {
+      throw new BadRequestException('Order cannot be paid in its current state');
+    }
+
+    const appUrl = this.config.get<string>('storefront.appUrl') ?? 'http://localhost:3000';
+    const result = await this.ngenius.initializePayment({
+      amount: order.totalPesewas,
+      currency: 'GHS',
+      reference: order.orderNumber,
+      email: order.email ?? undefined,
+      description: `Order ${order.orderNumber} - JadeXpress`,
+      redirectUrl: `${appUrl}/checkout/success/${order.orderNumber}?gw=ngenius`,
+      metadata: { orderId: order.id, orderNumber: order.orderNumber },
+    });
+
+    await this.db
+      .update(storefrontOrders)
+      .set({
+        paymentGateway: 'ngenius',
+        paymentReference: result.orderReference,
+        paymentMethod: 'card',
+        updatedAt: new Date(),
+      })
+      .where(eq(storefrontOrders.id, orderId));
+
+    return { paymentUrl: result.paymentUrl, orderReference: result.orderReference };
   }
 
   async listByCustomer(customerId: string) {

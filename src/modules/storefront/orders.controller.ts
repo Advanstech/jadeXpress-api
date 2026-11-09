@@ -89,6 +89,13 @@ export class OrdersController {
   }
 
   @Public()
+  @Post(':id/pay-link')
+  @ApiOperation({ summary: 'Create a hosted payment link for an unpaid order (N-Genius)' })
+  createPayLink(@Param('id') id: string) {
+    return this.ordersService.createNgeniusPaymentLink(id);
+  }
+
+  @Public()
   @Put(':id/pay')
   @ApiOperation({ summary: 'Record payment against an order (public, for gateway callbacks)' })
   markPaid(
